@@ -113,7 +113,7 @@ app = FastAPI()
 # HTTP Endpoints
 ###############################################################################
 @app.get("/search", response_class=HTMLResponse)
-async def search(q:str, num:int = 30, size:int=400, debug:bool=False):
+async def search(q:str, num:int = 36, size:int=400, debug:bool=False):
     text_features = model.compute_text_features(q)
     results = compute_similarities(global_features, text_features)
     return make_html(results,q,size,num,debug_features = text_features)
@@ -171,11 +171,11 @@ async def main(q:str):
         return HTMLResponse("Permission Denied")
 
 @app.get("/thm")
-async def main(q:str,size:int=400):
+async def thm(q:str,size:int=400):
     if not os.access(q, os.R_OK):
         censor(q)
     img = Image.open(q)
-    thm = img.thumbnail((size,size))
+    thm = img.thumbnail((size,3*size/4))
     buf = io.BytesIO()
     img.save(buf,format="jpeg")
     buf.seek(0)
@@ -189,10 +189,15 @@ async def main(q:str,size:int=400):
 # Minimal HTML template
 ###############################################################################
 
+def dedup_sims(similarities):
+    seen = set()
+    return [seen.add(s[0]) or s for s in similarities if s[0] not in seen and not seen.add(s[0])]
+
 def make_html(similarities,q,size,num,debug_features=None,debug=False):
-    scores_with_paths = [(score,filepaths[idx]) for score,idx in similarities[:num]]
+    sims = dedup_sims(similarities[:num*2])
+    scores_with_paths = [(score,filepaths[idx]) for score,idx in sims[:num]]
     imgs = [f"""
-             <div style="display:inline-block; border:1px solid black; width:{size}px">
+             <div style="">
                 <a href="/img?q={urllib.parse.quote(i)}" target="_blank"><img src="/thm?q={urllib.parse.quote(i)}&size={size}"></a>
                 <br>
                 {debug and str(int(100*s))+'%' or ""}
@@ -203,28 +208,49 @@ def make_html(similarities,q,size,num,debug_features=None,debug=False):
              """ 
             for s,i in scores_with_paths
             ]
-    tmpl = string.Template("""<html style="background-color:#444;">
-       <div style="background-color: #666; width: 100%; padding: 30px; font-family:Ariel">
-       <form action="search" style="font-size: 20pt">
-           <label for="q"><a href="/" style="color:black; text-decoration: none">Search:</a></label>
-           <input name="q"    id='q'     value="$__q__"    style="width:800px">
-           <input type="hidden" name="num"  id='num'   value="$__num__"  style="width:30px">
-           <input type="hidden" name="size" id='size'  value="$__size__" style="width:30px">
-           <input type="submit" value="Go">
-           <br>
+    tmpl = string.Template("""<html">
+       <style>
+          body {background-color: #ccc; width: 100%; font-family:Ariel}
+          form {margin:0px}
+          #header,#footer {background-color: #888; padding: 30px; }
+          .images div{display:inline-block; width:${__size__}px}
+          #q {width:800px}
+          #lq {font-size: 20pt}
+          #sizes,.images {font-size: 10pt}
+          a:link {text-decoration: none}
+          a:hover {text-decoration: underline}
+       </style>
+       <div id="header">
+       <form action="search">
+           <table><tr>
+            <td><label for="q" id="lq"><a href="/" style="color:black; text-decoration: none">Search:</a></label></td>
+            <td><input name="q" id='q' value="$__q__" style="width: width:800px"></td>
+            <td>
+             <!--
+             <input type="hidden" name="num"  id='num'   value="$__num__" style="width:30px">
+             <input type="hidden" name="size" id='size'  value="$__size__" style="width:30px">
+             -->
+             <input type="submit" value="Go">
+            </td>
+           </tr><tr><td></td>
+            <td id="sizes">
+             <a href="$__tiny__">tiny</a>
+             <a href="$__small__">small</a>
+             <a href="$__medium__">medium</a>
+             <a href="$__large__">large</a>
+             <a href="$__huge__">huge</a>
+            </td>
+           </tr></table>
        </form>
-       <a href="$__tiny__">tiny</a>
-       <a href="$__small__">small</a>
-       <a href="$__medium__">medium</a>
-       <a href="$__large__">large</a>
-       <a href="$__huge__">huge</a>
        </div>
+       <div class="images">
        $__imgs__
+       </div>
        <script>
           document.getElementById("q").focus();
        </script>
        <br>
-       <div style="background-color: #ccc; width: 100%; padding: 30px; font-family:Ariel">
+       <div id="footer">
        <a href="$__more__">more</a> | 
        <a href="$__opposite__">opposite</a>
        <br>
@@ -240,11 +266,11 @@ def make_html(similarities,q,size,num,debug_features=None,debug=False):
                            __q__         = html.escape(q),
                            __opposite__  = f"opposite?q={urllib.parse.quote(q)}&num={num}&size={size}",
                            __more__      = f"search?q={urllib.parse.quote(q)}&num={bigger_num}&size={size}",
-                           __tiny__      = f"search?q={urllib.parse.quote(q)}&size=100&num=200",
-                           __small__     = f"search?q={urllib.parse.quote(q)}&size=200&num=100",
-                           __medium__    = f"search?q={urllib.parse.quote(q)}&size=400&num=20",
-                           __large__     = f"search?q={urllib.parse.quote(q)}&size=600&num=10",
-                           __huge__      = f"search?q={urllib.parse.quote(q)}&size=800&num=10",
+                           __tiny__      = f"search?q={urllib.parse.quote(q)}&size=100&num=360",
+                           __small__     = f"search?q={urllib.parse.quote(q)}&size=200&num=180",
+                           __medium__    = f"search?q={urllib.parse.quote(q)}&size=400&num=48",
+                           __large__     = f"search?q={urllib.parse.quote(q)}&size=600&num=24",
+                           __huge__      = f"search?q={urllib.parse.quote(q)}&size=800&num=12",
                            __num__       = num,
                            __size__      = size,
                            __debug_txt__ = debug_txt
