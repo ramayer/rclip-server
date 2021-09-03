@@ -1,14 +1,15 @@
 #!/usr/bin/env python
 import argparse
-import pathlib
 import clip
 import clip.model
+import functools
 import html
 import io
+import json
 import numpy as np
+import pathlib
 import PIL as pillow
 import requests.utils
-import functools
 import sqlite3
 import string
 import torch
@@ -70,7 +71,7 @@ def compute_similarities(item_features: np.ndarray, desired_features: np.ndarray
 def load_vecs(path):
     with sqlite3.connect(args.db) as con:
         con.row_factory = sqlite3.Row
-        rclip_sql =  f'SELECT filepath, vector FROM images WHERE filepath LIKE ? AND deleted IS NULL'
+        rclip_sql =  f'SELECT filepath, vector, id FROM images WHERE filepath LIKE ? AND deleted IS NULL'
         return con.execute(rclip_sql,(path + '/%',))
 
 def censor(path):
@@ -82,13 +83,14 @@ def censor(path):
 def _get_features(directory: str) -> Tuple[List[str], np.ndarray]:
     filepaths: List[str] = []
     features: List[np.ndarray] = []
+    img_ids: List[int] = []
     for image in load_vecs(directory):
       filepaths.append(image['filepath'])
       features.append(np.frombuffer(image['vector'], np.float32))
+      img_ids.append(image['id'])
     if not filepaths:
       return [], np.ndarray(shape=(0, Model.VECTOR_SIZE))
-    return filepaths, np.stack(features)
-
+    return filepaths, np.stack(features), img_ids
 
 ################################################################################
 # Web server
@@ -97,24 +99,46 @@ def _get_features(directory: str) -> Tuple[List[str], np.ndarray]:
 parser                    = argparse.ArgumentParser()
 def_db                    = pathlib.Path.home() / '.local/share/rclip/db.sqlite3'
 parser.add_argument('--db','-d',default=str(def_db),help="path to rclip's database")
-args                      = parser.parse_args()
+args,unk                  = parser.parse_known_args()
 
 filepaths:        List[str]        = []
 global_features:  List[np.ndarray] = []
 
-filepaths,global_features   = _get_features('')
+filepaths,global_features,img_ids   = _get_features('')
 feature_minimums:np.ndarray = functools.reduce(lambda x,y: np.minimum(x,y), global_features)
 feature_maximums:np.ndarray = functools.reduce(lambda x,y: np.maximum(x,y), global_features)
 feature_ranges:np.ndarray   = feature_maximums - feature_minimums
-
+idx_to_imgid = dict(enumerate(img_ids))
+imgid_to_idx = dict([(y,x) for x,y in enumerate(img_ids)])
+def get_path_from_id(img_id:int):
+    return filepaths[imgid_to_idx[img_id]]
 app = FastAPI()
 
 ###############################################################################
 # HTTP Endpoints
 ###############################################################################
+@app.get("/conceptmap", response_class=HTMLResponse)
+async def search(q:str, m:str=None, p:str=None,num:int = 36, size:int=400, debug:bool=False):
+    features = model.compute_text_features(q)
+    if p:
+      plus_features = model.compute_text_features(p)
+      features = features + plus_features
+    if m:
+      minus_features = model.compute_text_features(m)
+      features = features - minus_features
+    combined_features = features
+    print(features)
+    results = compute_similarities(global_features, combined_features)
+    print(results[0:10])
+    return make_html(results,q,size,num,debug_features = combined_features)
+
 @app.get("/search", response_class=HTMLResponse)
 async def search(q:str, num:int = 36, size:int=400, debug:bool=False):
-    text_features = model.compute_text_features(q)
+    "Accept either a json array of CLIP embedding values, or a search string"
+    if q.startswith('['):
+        text_features = np.asarray([json.loads(q)])
+    else:
+        text_features = model.compute_text_features(q)
     results = compute_similarities(global_features, text_features)
     return make_html(results,q,size,num,debug_features = text_features)
 
@@ -126,16 +150,12 @@ async def opposite(q:str, num:int = 20, size:int=400):
     return make_html(results,q,size,num,debug_features = text_features)
 
 @app.get("/mlt", response_class=HTMLResponse)
-async def mlt(q:str,num:int=100,size=400):
-    img = Image.open(q)
+async def mlt(img_id:int,num:int=100,size=400):
+    img_path = get_path_from_id(img_id)
+    img = Image.open(img_path)
     ref_features = model.compute_image_features([img])[0]
     results = compute_similarities(global_features, [ref_features])
-    return make_html(results,q,size,num,debug_features = ref_features)
-
-@app.get("/censor", response_class=HTMLResponse)
-async def censor_endpoint(path:str):
-    censor(path)
-    return(f"<html>Ok, {path} is censored</html>")
+    return make_html(results,img_path,size,num,debug_features = ref_features)
 
 @app.get("/mut", response_class=HTMLResponse)
 async def mut(q:str,num:int=100,size=400):
@@ -145,9 +165,16 @@ async def mut(q:str,num:int=100,size=400):
     results.reverse()
     return make_html(results,q,size,num,debug_features = ref_features)
 
+@app.get("/censor", response_class=HTMLResponse)
+async def censor_endpoint(img_id:int):
+    path = get_path_from_id(img_id)
+    censor(path)
+    return(f"<html>Ok, {path} is censored</html>")
+
 @app.get("/rnd", response_class=HTMLResponse)
 async def rnd(seed=0,num:int=100,size:int=400):
     ref_features = np.random.rand(512) * feature_ranges + feature_minimums
+    ref_features /= np.linalg.norm(ref_features)
     results = compute_similarities(global_features, [ref_features])
     return make_html(results,'[random]',size,num,debug_features = ref_features)
 
@@ -163,27 +190,25 @@ def home():
 
 import os
 @app.get("/img")
-async def main(q:str):
-    if os.access(q, os.R_OK):
-        return FileResponse(q)
-    else:
-        censor(q)
-        return HTMLResponse("Permission Denied")
+async def img(img_id:int):
+    img_path = get_path_from_id(img_id)
+    hdrs = {
+      'Cache-Control': 'public, max-age=172800'
+    }
+    return FileResponse(img_path, headers=hdrs)
 
 @app.get("/thm")
-async def thm(q:str,size:int=400):
-    if not os.access(q, os.R_OK):
-        censor(q)
-    img = Image.open(q)
+async def thm(img_id:int, size:int=400):
+    img_path = get_path_from_id(img_id)
+    img = Image.open(img_path)
     thm = img.thumbnail((size,3*size/4))
     buf = io.BytesIO()
     img.save(buf,format="jpeg")
     buf.seek(0)
     hdrs = {
-        'Cache-Control': 'public, max-age=3600'
+        'Cache-Control': 'public, max-age=172800'
     }
     return StreamingResponse(buf,media_type="image/jpeg", headers=hdrs)
-
 
 ###############################################################################
 # Minimal HTML template
@@ -195,18 +220,18 @@ def dedup_sims(similarities):
 
 def make_html(similarities,q,size,num,debug_features=None,debug=False):
     sims = dedup_sims(similarities[:num*2])
-    scores_with_paths = [(score,filepaths[idx]) for score,idx in sims[:num]]
+    scores_with_imgids = [(score,idx_to_imgid[idx]) for score,idx in sims[:num]]
     imgs = [f"""
              <div style="">
-                <a href="/img?q={urllib.parse.quote(i)}" target="_blank"><img src="/thm?q={urllib.parse.quote(i)}&size={size}"></a>
+                <a href="/img?img_id={img_id}" target="_blank"><img src="/thm?img_id={img_id}&size={size}"></a>
                 <br>
-                {debug and str(int(100*s))+'%' or ""}
-                <a href="/mlt?q={urllib.parse.quote(i)}">more like this</a>
-                <!--<a href="/censor?path={urllib.parse.quote(i)}">censor this</a>-->
-                {debug and "" or "<!--"} | <a href="/mut?q={urllib.parse.quote(i)}">unlike this</a> {debug and "" or "-->"}
+                {str(int(100*s))+'% similarity'}
+                <a href="/mlt?img_id={img_id}">more like this</a>
+                <!--<a href="/censor?path=FIXME">censor this</a>-->
+                {debug and "" or "<!--"} | <a href="/mut?q={img_id}">unlike this</a> {debug and "" or "-->"}
              </div>
              """ 
-            for s,i in scores_with_paths
+            for s,img_id in scores_with_imgids
             ]
     tmpl = string.Template("""<html">
        <style>
@@ -259,8 +284,16 @@ def make_html(similarities,q,size,num,debug_features=None,debug=False):
     </html>""")
     debug_txt = ""
     if debug_features is not None:
-        normalized_debug_features = 100 * (debug_features - feature_minimums) / feature_ranges
-        debug_txt = " ".join([f"{int(x):02d}" for x in normalized_debug_features.flatten()])
+        clip_vec_as_json = json.dumps(debug_features.flatten().tolist())
+        debug_txt += f"<a href=search_by_json?q={urllib.parse.quote(clip_vec_as_json)}>CLIP embedding</a>:"
+        debug_txt += "<table><tr>"
+        normalized_debug_features = 255 * (debug_features - feature_minimums) / feature_ranges
+        zipped_features = zip(debug_features.flatten(),normalized_debug_features.flatten())
+        for idx,(df,nf) in enumerate(zipped_features):
+            clr = nf > 255 and 255 or int(nf) < 0 and 0 or int(nf)
+            debug_txt += f"""<td style="background:#{clr:02x}{clr:02x}ff">{float(df):0.2g}</td>"""
+            if idx % 16 == 15: debug_txt += "</tr><tr>" 
+        debug_txt += "</table>"
     bigger_num = (num > 100) and 1000 or num * 10
     return tmpl.substitute(__imgs__      = " ".join(imgs),
                            __q__         = html.escape(q),
