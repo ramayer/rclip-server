@@ -16,16 +16,17 @@ import torch
 import torch.nn
 import urllib.parse
 import uvicorn
+import fastapi.responses
 
-from fastapi import FastAPI
-from fastapi.responses import FileResponse
-from fastapi.responses import HTMLResponse
+from typing import Optional
+from fastapi import Cookie, FastAPI
+from fastapi.responses import FileResponse,HTMLResponse
 from PIL import Image
+from starlette.requests import Request
 from starlette.responses import StreamingResponse
 from tqdm import tqdm
 from typing import Callable, List, Tuple, cast
 from typing import Iterable, List, NamedTuple, Tuple, TypedDict, cast
-
 
 ###############################################################################
 # Plagerized from rclip
@@ -112,13 +113,15 @@ idx_to_imgid = dict(enumerate(img_ids))
 imgid_to_idx = dict([(y,x) for x,y in enumerate(img_ids)])
 def get_path_from_id(img_id:int):
     return filepaths[imgid_to_idx[img_id]]
+
+
 app = FastAPI()
 
 ###############################################################################
 # HTTP Endpoints
 ###############################################################################
 @app.get("/conceptmap", response_class=HTMLResponse)
-async def search(q:str, m:str=None, p:str=None,num:int = 36, size:int=400, debug:bool=False):
+async def conceptmap(q:str, m:str=None, p:str=None,num:int = 36, size:int=400, debug:bool=False):
     features = model.compute_text_features(q)
     if p:
       plus_features = model.compute_text_features(p)
@@ -132,25 +135,41 @@ async def search(q:str, m:str=None, p:str=None,num:int = 36, size:int=400, debug
     print(results[0:10])
     return make_html(results,q,size,num,debug_features = combined_features)
 
+def reasonable_num(size:int):
+    return (size < 100 and 360 
+            or size < 200 and 180
+            or size < 400 and 48
+            or size < 600 and 24
+            or size < 800 and 12
+            or 6)
+
 @app.get("/search", response_class=HTMLResponse)
-async def search(q:str, num:int = 36, size:int=400, debug:bool=False):
-    "Accept either a json array of CLIP embedding values, or a search string"
-    if q.startswith('['):
-        text_features = np.asarray([json.loads(q)])
-    else:
-        text_features = model.compute_text_features(q)
-    results = compute_similarities(global_features, text_features)
-    return make_html(results,q,size,num,debug_features = text_features)
+async def search(q:str, num:Optional[int] = None, size:int=Cookie(400)):
+    desired_features = model.compute_text_features(q)
+    results = compute_similarities(global_features, desired_features)
+    return make_html(results,q,size,num,debug_features = desired_features)
+
+@app.get("/search_clip_embedding", response_class=HTMLResponse)
+async def search(q:str, num:Optional[int] = None, size:int=Cookie(400)):
+    desired_features = np.asarray([json.loads(q)])
+    results = compute_similarities(global_features, desired_features)
+    return make_html(results,q,size,num,debug_features = desired_features)
 
 @app.get("/opposite", response_class=HTMLResponse)
-async def opposite(q:str, num:int = 20, size:int=400):
+async def opposite(q:str, num:Optional[int] = None, size:int=Cookie(400)):
     text_features = model.compute_text_features(q)
     results = compute_similarities(global_features, text_features)
     results.reverse()
     return make_html(results,q,size,num,debug_features = text_features)
 
+@app.get("/opposite2", response_class=HTMLResponse)
+async def opposite(q:str, num:Optional[int] = None, size:int=Cookie(400)):
+    text_features = model.compute_text_features(q)
+    results = compute_similarities(global_features, text_features* -1)
+    return make_html(results,q,size,num,debug_features = text_features)
+
 @app.get("/mlt", response_class=HTMLResponse)
-async def mlt(img_id:int,num:int=100,size=400):
+async def mlt(img_id:int, num:Optional[int] = None, size:int=Cookie(400)):
     img_path = get_path_from_id(img_id)
     img = Image.open(img_path)
     ref_features = model.compute_image_features([img])[0]
@@ -173,16 +192,17 @@ async def censor_endpoint(img_id:int):
 
 @app.get("/rnd", response_class=HTMLResponse)
 async def rnd(seed=0,num:int=100,size:int=400):
-    ref_features = np.random.rand(512) * feature_ranges + feature_minimums
+    rng = np.random.default_rng(seed)
+    ref_features = rng.random(512) * feature_ranges + feature_minimums
     ref_features /= np.linalg.norm(ref_features)
     results = compute_similarities(global_features, [ref_features])
     return make_html(results,'[random]',size,num,debug_features = ref_features)
 
 @app.get("/avg", response_class=HTMLResponse)
-async def avg(seed=0,num:int=100):
+async def avg(seed=0,num:Optional[int] = None, size:int=Cookie(400)):
     ref_features = 0.5 * feature_ranges + feature_minimums
     results = compute_similarities(global_features, [ref_features])
-    return make_html(results,q,size,num,debug_features = ref_features)
+    return make_html(results,'',size,num,debug_features = ref_features)
 
 @app.get("/",response_class=HTMLResponse)
 def home():
@@ -193,21 +213,28 @@ import os
 async def img(img_id:int):
     img_path = get_path_from_id(img_id)
     hdrs = {
-      'Cache-Control': 'public, max-age=172800'
+      'Cache-Control': 'public, max-age=172800',
     }
     return FileResponse(img_path, headers=hdrs)
 
-@app.get("/thm")
-async def thm(img_id:int, size:int=400):
+@app.get("/cookie")
+def create_cookie(key:str, val:str,request: Request, response: fastapi.responses.Response):
+    response.set_cookie(key=key, value=val)
+    return {"message": "Come to the dark side, we have cookies",
+      'path':request.url.path,
+      'headers':request.headers,
+      'help':dir(request)
+      }
+
+@app.get("/thm/{img_id}")
+async def thm(img_id:int, size:Optional[int]=400):
     img_path = get_path_from_id(img_id)
     img = Image.open(img_path)
     thm = img.thumbnail((size,3*size/4))
     buf = io.BytesIO()
     img.save(buf,format="jpeg")
     buf.seek(0)
-    hdrs = {
-        'Cache-Control': 'public, max-age=172800'
-    }
+    hdrs = {'Cache-Control': 'public, max-age=172800'}
     return StreamingResponse(buf,media_type="image/jpeg", headers=hdrs)
 
 ###############################################################################
@@ -219,11 +246,13 @@ def dedup_sims(similarities):
     return [seen.add(s[0]) or s for s in similarities if s[0] not in seen and not seen.add(s[0])]
 
 def make_html(similarities,q,size,num,debug_features=None,debug=False):
+    num = num or reasonable_num(size)
     sims = dedup_sims(similarities[:num*2])
     scores_with_imgids = [(score,idx_to_imgid[idx]) for score,idx in sims[:num]]
+    debug=True
     imgs = [f"""
              <div style="">
-                <a href="/img?img_id={img_id}" target="_blank"><img src="/thm?img_id={img_id}&size={size}"></a>
+                <a href="/img?img_id={img_id}" target="_blank"><img src="/thm/{img_id}?size={size}"></a>
                 <br>
                 {str(int(100*s))+'% similarity'}
                 <a href="/mlt?img_id={img_id}">more like this</a>
@@ -233,37 +262,60 @@ def make_html(similarities,q,size,num,debug_features=None,debug=False):
              """ 
             for s,img_id in scores_with_imgids
             ]
-    tmpl = string.Template("""<html">
+    tmpl = string.Template("""<html>
+        <title>{urllib.parse.quote(q)}</title>
        <style>
           body {background-color: #ccc; width: 100%; font-family:Ariel}
           form {margin:0px}
-          #header,#footer {background-color: #888; padding: 30px; }
+          #header,#footer {background-color: #888; padding: 10px 20px 10px 20px; }
           .images div{display:inline-block; width:${__size__}px}
-          #q {width:800px}
+          #q {width:100%}
           #lq {font-size: 20pt}
           #sizes,.images {font-size: 10pt}
           a:link {text-decoration: none}
           a:hover {text-decoration: underline}
        </style>
+       <script>
+            function setCookie(cname, cvalue, exdays) {
+              const d = new Date();
+              d.setTime(d.getTime() + (exdays*24*60*60*1000));
+              let expires = "expires="+ d.toUTCString();
+              document.cookie = cname + "=" + cvalue + ";" + expires + ";path=/;SameSite=Lax";
+            }
+            function set_size(s) {
+                setCookie('size',s,2);
+                location.reload(); 
+            }
+            /*
+           fetch("https://ipinfo.io/json")
+               .then(function (response) {
+                   return response.json();
+               })
+               .then(function (myJson) {
+                   console.log(myJson.ip);
+               })
+               .catch(function (error) {
+                   console.log("Error: " + error);
+              });
+            */
+       </script>
+
        <div id="header">
        <form action="search">
-           <table><tr>
-            <td><label for="q" id="lq"><a href="/" style="color:black; text-decoration: none">Search:</a></label></td>
-            <td><input name="q" id='q' value="$__q__" style="width: width:800px"></td>
-            <td>
-             <!--
-             <input type="hidden" name="num"  id='num'   value="$__num__" style="width:30px">
-             <input type="hidden" name="size" id='size'  value="$__size__" style="width:30px">
-             -->
-             <input type="submit" value="Go">
-            </td>
+           <table width="100%"><tr>
+            <td width="10%"><label for="q" id="lq"><a href="/" style="color:black; text-decoration: none">Search:</a></label></td>
+            <td width="80%"><input name="q" id='q' value="$__q__" style="width: width:800px"></td>
+            <td width="10%"><input type="submit" value="Go"></td>
            </tr><tr><td></td>
             <td id="sizes">
-             <a href="$__tiny__">tiny</a>
-             <a href="$__small__">small</a>
-             <a href="$__medium__">medium</a>
-             <a href="$__large__">large</a>
-             <a href="$__huge__">huge</a>
+            <div style="float:right"><a href="/rnd">random</a></div>
+            <div id="sizelinks" style="width:50%">
+             <a href="javascript:set_size(100)">tiny</a>
+             <a href="javascript:set_size(200)">small</a>
+             <a href="javascript:set_size(400)">medium</a>
+             <a href="javascript:set_size(600)">large</a>
+             <a href="javascript:set_size(800)">huge</a>
+             </div>
             </td>
            </tr></table>
        </form>
@@ -285,7 +337,7 @@ def make_html(similarities,q,size,num,debug_features=None,debug=False):
     debug_txt = ""
     if debug_features is not None:
         clip_vec_as_json = json.dumps(debug_features.flatten().tolist())
-        debug_txt += f"<a href=search_by_json?q={urllib.parse.quote(clip_vec_as_json)}>CLIP embedding</a>:"
+        debug_txt += f"<a href=search_clip_embedding?q={urllib.parse.quote(clip_vec_as_json)}>CLIP embedding</a>:"
         debug_txt += "<table><tr>"
         normalized_debug_features = 255 * (debug_features - feature_minimums) / feature_ranges
         zipped_features = zip(debug_features.flatten(),normalized_debug_features.flatten())
@@ -299,11 +351,6 @@ def make_html(similarities,q,size,num,debug_features=None,debug=False):
                            __q__         = html.escape(q),
                            __opposite__  = f"opposite?q={urllib.parse.quote(q)}&num={num}&size={size}",
                            __more__      = f"search?q={urllib.parse.quote(q)}&num={bigger_num}&size={size}",
-                           __tiny__      = f"search?q={urllib.parse.quote(q)}&size=100&num=360",
-                           __small__     = f"search?q={urllib.parse.quote(q)}&size=200&num=180",
-                           __medium__    = f"search?q={urllib.parse.quote(q)}&size=400&num=48",
-                           __large__     = f"search?q={urllib.parse.quote(q)}&size=600&num=24",
-                           __huge__      = f"search?q={urllib.parse.quote(q)}&size=800&num=12",
                            __num__       = num,
                            __size__      = size,
                            __debug_txt__ = debug_txt
