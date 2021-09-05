@@ -1,4 +1,5 @@
 #!/usr/bin/env python
+
 import argparse
 import clip
 import clip.model
@@ -9,6 +10,7 @@ import json
 import numpy as np
 import pathlib
 import PIL as pillow
+import random
 import requests.utils
 import sqlite3
 import string
@@ -62,176 +64,217 @@ class Model:
 # Paraphrased from rclip
 ###############################################################################
 
-model = Model()
+#model = Model()
 
-def compute_similarities(item_features: np.ndarray, desired_features: np.ndarray) -> List[Tuple[float, int]]:
-    similarities = (desired_features @ item_features.T).squeeze(0).tolist()
-    sorted_similarities = sorted(zip(similarities, range(item_features.shape[0])), key=lambda x: x[0], reverse=True)
-    return sorted_similarities
+class RClipServer:
 
-def load_vecs(path):
-    with sqlite3.connect(args.db) as con:
-        con.row_factory = sqlite3.Row
-        rclip_sql =  f'SELECT filepath, vector, id FROM images WHERE filepath LIKE ? AND deleted IS NULL'
-        return con.execute(rclip_sql,(path + '/%',))
+    def __init__(self,rclip_db):
+        self._db    = rclip_db
+        self._model = Model()
+        self.filepaths:        List[str]        = []
+        self.global_features:  List[np.ndarray] = []
+        self.img_ids:          List[int]        = []
+        self.filepaths,self.global_features,self.img_ids   = self._get_features('')
+        self.feature_minimums:np.ndarray = functools.reduce(lambda x,y: np.minimum(x,y), self.global_features)
+        self.feature_maximums:np.ndarray = functools.reduce(lambda x,y: np.maximum(x,y), self.global_features)
+        self.feature_ranges:np.ndarray   = self.feature_maximums - self.feature_minimums
+        self.idx_to_imgid = dict(enumerate(self.img_ids))
+        self.imgid_to_idx = dict([(y,x) for x,y in enumerate(self.img_ids)])
 
-def censor(path):
-    with sqlite3.connect(args.db) as con:
-        con.row_factory = sqlite3.Row
-        rclip_sql =  f'UPDATE images SET deleted=True where filepath = ?'
-        return con.execute(rclip_sql,(path,))
+    def compute_image_features(self, images: List[Image.Image]) -> np.ndarray:
+        return self._model.compute_image_features(images)
 
-def _get_features(directory: str) -> Tuple[List[str], np.ndarray]:
-    filepaths: List[str] = []
-    features: List[np.ndarray] = []
-    img_ids: List[int] = []
-    for image in load_vecs(directory):
-      filepaths.append(image['filepath'])
-      features.append(np.frombuffer(image['vector'], np.float32))
-      img_ids.append(image['id'])
-    if not filepaths:
-      return [], np.ndarray(shape=(0, Model.VECTOR_SIZE))
-    return filepaths, np.stack(features), img_ids
+    def compute_text_features(self, text:str) -> np.ndarray:
+        return self._model.compute_text_features(text)
+
+    def get_path_from_id(self,img_id:int):
+        return self.filepaths[self.imgid_to_idx[img_id]]
+
+    # Copied From RClip
+    def compute_similarities(self,item_features: np.ndarray, desired_features: np.ndarray) -> List[Tuple[float, int]]:
+        raise(Exception('deprecated'))
+        item_features = self.global_features
+        similarities = (desired_features @ item_features.T).squeeze(0).tolist()
+        sorted_similarities = sorted(zip(similarities, range(item_features.shape[0])), key=lambda x: x[0], reverse=True)
+        return sorted_similarities
+
+    # Paraphrased From RClip
+    def find_similar_images(self,desired_features: np.ndarray) -> List[Tuple[float, int]]:
+        item_features = self.global_features
+        similarities = (desired_features @ item_features.T).squeeze(0).tolist()
+        sorted_similarities = sorted(zip(similarities, range(item_features.shape[0])), key=lambda x: x[0], reverse=True)
+        return sorted_similarities
+
+    # Paraphrased From RClip
+    def load_vecs(self,path):
+        with sqlite3.connect(args.db) as con:
+            con.row_factory = sqlite3.Row
+            rclip_sql =  f'SELECT filepath, vector, id FROM images WHERE filepath LIKE ? AND deleted IS NULL'
+            return con.execute(rclip_sql,(path + '/%',))
+
+    # Paraphrased From RClip
+    def _get_features(self,directory: str) -> Tuple[List[str], np.ndarray]:
+        filepaths: List[str] = []
+        features: List[np.ndarray] = []
+        img_ids: List[int] = []
+        for image in self.load_vecs(directory):
+          filepaths.append(image['filepath'])
+          features.append(np.frombuffer(image['vector'], np.float32))
+          img_ids.append(image['id'])
+        if not filepaths:
+          return [], np.ndarray(shape=(0, Model.VECTOR_SIZE))
+        return filepaths, np.stack(features), img_ids
+
+    def censor(self,path):
+        with sqlite3.connect(args.db) as con:
+            con.row_factory = sqlite3.Row
+            rclip_sql =  f'UPDATE images SET deleted=True where filepath = ?'
+            return con.execute(rclip_sql,(path,))
+        self.__init__(self._db)
+
+    def guess_user_intent(self,q):
+
+        if not q.startswith('{'):
+            return self.compute_text_features(q)
+
+        data = json.loads(q)
+
+        if img_id := data.get('image_id'):
+            img_path = self.get_path_from_id(img_id)
+            img     = Image.open(img_path)
+            return self.compute_image_features([img])
+
+        if embedding := data.get('clip_embedding'):
+            return np.asarray([embedding])
+
+        if seed := data.get('random_seed'):
+            rng = np.random.default_rng(seed)
+            rnd_features = rng.random(512) * rclip_server.feature_ranges + rclip_server.feature_minimums
+            rnd_features /= np.linalg.norm(rnd_features)
+            return np.asarray([rnd_features])
+
+    def reasonable_num(self,size:int):
+        return (size < 100 and 360 
+                or size < 200 and 180
+                or size < 400 and 48
+                or size < 600 and 24
+                or size < 800 and 12
+                or 6)
 
 ################################################################################
-# Web server
+# Create FastAPI server
 ################################################################################
 
 parser                    = argparse.ArgumentParser()
 def_db                    = pathlib.Path.home() / '.local/share/rclip/db.sqlite3'
 parser.add_argument('--db','-d',default=str(def_db),help="path to rclip's database")
 args,unk                  = parser.parse_known_args()
-
-filepaths:        List[str]        = []
-global_features:  List[np.ndarray] = []
-
-filepaths,global_features,img_ids   = _get_features('')
-feature_minimums:np.ndarray = functools.reduce(lambda x,y: np.minimum(x,y), global_features)
-feature_maximums:np.ndarray = functools.reduce(lambda x,y: np.maximum(x,y), global_features)
-feature_ranges:np.ndarray   = feature_maximums - feature_minimums
-idx_to_imgid = dict(enumerate(img_ids))
-imgid_to_idx = dict([(y,x) for x,y in enumerate(img_ids)])
-def get_path_from_id(img_id:int):
-    return filepaths[imgid_to_idx[img_id]]
-
-
-app = FastAPI()
+rclip_server              = RClipServer(args.db)
+app                       = FastAPI()
 
 ###############################################################################
 # HTTP Endpoints
 ###############################################################################
-@app.get("/conceptmap", response_class=HTMLResponse)
-async def conceptmap(q:str, m:str=None, p:str=None,num:int = 36, size:int=400, debug:bool=False):
-    features = model.compute_text_features(q)
-    if p:
-      plus_features = model.compute_text_features(p)
-      features = features + plus_features
-    if m:
-      minus_features = model.compute_text_features(m)
-      features = features - minus_features
-    combined_features = features
-    print(features)
-    results = compute_similarities(global_features, combined_features)
-    print(results[0:10])
-    return make_html(results,q,size,num,debug_features = combined_features)
-
-def reasonable_num(size:int):
-    return (size < 100 and 360 
-            or size < 200 and 180
-            or size < 400 and 48
-            or size < 600 and 24
-            or size < 800 and 12
-            or 6)
 
 @app.get("/search", response_class=HTMLResponse)
 async def search(q:str, num:Optional[int] = None, size:int=Cookie(400)):
-    desired_features = model.compute_text_features(q)
-    results = compute_similarities(global_features, desired_features)
-    return make_html(results,q,size,num,debug_features = desired_features)
-
-@app.get("/search_clip_embedding", response_class=HTMLResponse)
-async def search(q:str, num:Optional[int] = None, size:int=Cookie(400)):
-    desired_features = np.asarray([json.loads(q)])
-    results = compute_similarities(global_features, desired_features)
+    desired_features = rclip_server.guess_user_intent(q)
+    results = rclip_server.find_similar_images(desired_features)
     return make_html(results,q,size,num,debug_features = desired_features)
 
 @app.get("/opposite", response_class=HTMLResponse)
 async def opposite(q:str, num:Optional[int] = None, size:int=Cookie(400)):
-    text_features = model.compute_text_features(q)
-    results = compute_similarities(global_features, text_features)
-    results.reverse()
-    return make_html(results,q,size,num,debug_features = text_features)
+    desired_features = rclip_server.guess_user_intent(q)
+    results = rclip_server.find_similar_images(desired_features * -1)
+    return make_html(results,q,size,num,debug_features = desired_features)
 
-@app.get("/opposite2", response_class=HTMLResponse)
-async def opposite(q:str, num:Optional[int] = None, size:int=Cookie(400)):
-    text_features = model.compute_text_features(q)
-    results = compute_similarities(global_features, text_features* -1)
-    return make_html(results,q,size,num,debug_features = text_features)
-
-@app.get("/mlt", response_class=HTMLResponse)
-async def mlt(img_id:int, num:Optional[int] = None, size:int=Cookie(400)):
-    img_path = get_path_from_id(img_id)
-    img = Image.open(img_path)
-    ref_features = model.compute_image_features([img])[0]
-    results = compute_similarities(global_features, [ref_features])
-    return make_html(results,img_path,size,num,debug_features = ref_features)
-
-@app.get("/mut", response_class=HTMLResponse)
-async def mut(q:str,num:int=100,size=400):
-    img = Image.open(q)
-    ref_features = model.compute_image_features([img])[0]
-    results = compute_similarities(global_features, [ref_features])
-    results.reverse()
-    return make_html(results,q,size,num,debug_features = ref_features)
+# @app.get("/rnd", response_class=HTMLResponse)
+# async def rnd(seed:int=0,num:int=100,size:int=400):
+#     rng = np.random.default_rng(seed)
+#     ref_features = rng.random(512) * rclip_server.feature_ranges + rclip_server.feature_minimums
+#     ref_features /= np.linalg.norm(ref_features)
+#     results = rclip_server.find_similar_images([ref_features])
+#     return make_html(results,'[random]',size,num,debug_features = ref_features)
+# 
+# @app.get("/search_clip_embedding", response_class=HTMLResponse)
+# async def search(q:str, num:Optional[int] = None, size:int=Cookie(400)):
+#     desired_features = np.asarray([json.loads(q)])
+#     results = rclip_server.find_similar_images( desired_features)
+#     return make_html(results,q,size,num,debug_features = desired_features)
+# 
+# @app.get("/opposite", response_class=HTMLResponse)
+# async def opposite(q:str, num:Optional[int] = None, size:int=Cookie(400)):
+#     text_features = rclip_server.compute_text_features(q)
+#     results = rclip_server.find_similar_images( text_features)
+#     results.reverse()
+#     return make_html(results,q,size,num,debug_features = text_features)
+# 
+# @app.get("/opposite2", response_class=HTMLResponse)
+# async def opposite(q:str, num:Optional[int] = None, size:int=Cookie(400)):
+#     text_features = rclip_server.compute_text_features(q)
+#     results = rclip_server.find_similar_images( text_features * -1)
+#     return make_html(results,q,size,num,debug_features = text_features)
+# 
+# @app.get("/mlt", response_class=HTMLResponse)
+# async def mlt(img_id:int, num:Optional[int] = None, size:int=Cookie(400)):
+#     img_path = rclip_server.get_path_from_id(img_id)
+#     img = Image.open(img_path)
+#     ref_features = rclip_server.compute_image_features([img])[0]
+#     results = rclip_server.find_similar_images( [ref_features])
+#     return make_html(results,img_path,size,num,debug_features = ref_features)
+# 
+# @app.get("/mut", response_class=HTMLResponse)
+# async def mut(img_id:int, num:Optional[int] = None, size:int=Cookie(400)):
+#     img_path = rclip_server.get_path_from_id(img_id)
+#     img = Image.open(img_path)
+#     ref_features = rclip_server.compute_image_features([img])[0]
+#     results = rclip_server.find_similar_images( [ref_features*-1])
+#     return make_html(results,img_path,size,num,debug_features = ref_features)
+# 
+# @app.get("/conceptmap", response_class=HTMLResponse)
+# async def conceptmap(q:str, m:str=None, p:str=None,num:int = 36, size:int=400, debug:bool=False):
+#     features = rclip_server.compute_text_features(q)
+#     if p:
+#       plus_features = rclip_server.compute_text_features(p)
+#       features = features + plus_features
+#     if m:
+#       minus_features = rclip_server.compute_text_features(m)
+#       features = features - minus_features
+#     combined_features = features
+#     print(features)
+#     results = rclip_server.find_similar_images( combined_features)
+#     print(results[0:10])
+#     return make_html(results,q,size,num,debug_features = combined_features)
 
 @app.get("/censor", response_class=HTMLResponse)
 async def censor_endpoint(img_id:int):
-    path = get_path_from_id(img_id)
-    censor(path)
+    path = rclip_server.get_path_from_id(img_id)
+    rclip_server.censor(path)
     return(f"<html>Ok, {path} is censored</html>")
-
-@app.get("/rnd", response_class=HTMLResponse)
-async def rnd(seed=0,num:int=100,size:int=400):
-    rng = np.random.default_rng(seed)
-    ref_features = rng.random(512) * feature_ranges + feature_minimums
-    ref_features /= np.linalg.norm(ref_features)
-    results = compute_similarities(global_features, [ref_features])
-    return make_html(results,'[random]',size,num,debug_features = ref_features)
 
 @app.get("/avg", response_class=HTMLResponse)
 async def avg(seed=0,num:Optional[int] = None, size:int=Cookie(400)):
     ref_features = 0.5 * feature_ranges + feature_minimums
-    results = compute_similarities(global_features, [ref_features])
+    results = rclip_server.find_similar_images( [ref_features])
     return make_html(results,'',size,num,debug_features = ref_features)
 
 @app.get("/",response_class=HTMLResponse)
 def home():
     return make_html([],'',400,20,debug_features = None)
 
-import os
 @app.get("/img")
 async def img(img_id:int):
-    img_path = get_path_from_id(img_id)
-    hdrs = {
-      'Cache-Control': 'public, max-age=172800',
-    }
+    img_path = rclip_server.get_path_from_id(img_id)
+    hdrs = {'Cache-Control': 'public, max-age=172800'}
     return FileResponse(img_path, headers=hdrs)
-
-@app.get("/cookie")
-def create_cookie(key:str, val:str,request: Request, response: fastapi.responses.Response):
-    response.set_cookie(key=key, value=val)
-    return {"message": "Come to the dark side, we have cookies",
-      'path':request.url.path,
-      'headers':request.headers,
-      'help':dir(request)
-      }
 
 @app.get("/thm/{img_id}")
 async def thm(img_id:int, size:Optional[int]=400):
-    img_path = get_path_from_id(img_id)
+    img_path = rclip_server.get_path_from_id(img_id)
     img = Image.open(img_path)
     thm = img.thumbnail((size,3*size/4))
     buf = io.BytesIO()
+    if img.mode != 'RGB': img = img.convert('RGB')
     img.save(buf,format="jpeg")
     buf.seek(0)
     hdrs = {'Cache-Control': 'public, max-age=172800'}
@@ -246,24 +289,24 @@ def dedup_sims(similarities):
     return [seen.add(s[0]) or s for s in similarities if s[0] not in seen and not seen.add(s[0])]
 
 def make_html(similarities,q,size,num,debug_features=None,debug=False):
-    num = num or reasonable_num(size)
+    num = num or rclip_server.reasonable_num(size)
     sims = dedup_sims(similarities[:num*2])
-    scores_with_imgids = [(score,idx_to_imgid[idx]) for score,idx in sims[:num]]
+    scores_with_imgids = [(score,rclip_server.idx_to_imgid[idx]) for score,idx in sims[:num]]
     debug=True
     imgs = [f"""
              <div style="">
                 <a href="/img?img_id={img_id}" target="_blank"><img src="/thm/{img_id}?size={size}"></a>
                 <br>
                 {str(int(100*s))+'% similarity'}
-                <a href="/mlt?img_id={img_id}">more like this</a>
-                <!--<a href="/censor?path=FIXME">censor this</a>-->
+                <a href='/search?q={urllib.parse.quote(json.dumps({"image_id":img_id,'path':rclip_server.get_path_from_id(img_id)}))}'>more like this</a>
+                <!-- <a href="/censor?img_id={img_id}">censor this</a>-->
                 {debug and "" or "<!--"} | <a href="/mut?q={img_id}">unlike this</a> {debug and "" or "-->"}
              </div>
              """ 
             for s,img_id in scores_with_imgids
             ]
     tmpl = string.Template("""<html>
-        <title>{urllib.parse.quote(q)}</title>
+        <title>$__title__</title>
        <style>
           body {background-color: #ccc; width: 100%; font-family:Ariel}
           form {margin:0px}
@@ -308,7 +351,7 @@ def make_html(similarities,q,size,num,debug_features=None,debug=False):
             <td width="10%"><input type="submit" value="Go"></td>
            </tr><tr><td></td>
             <td id="sizes">
-            <div style="float:right"><a href="/rnd">random</a></div>
+            <div style="float:right"><a href="/search?q=$__seed__">random</a></div>
             <div id="sizelinks" style="width:50%">
              <a href="javascript:set_size(100)">tiny</a>
              <a href="javascript:set_size(200)">small</a>
@@ -336,10 +379,10 @@ def make_html(similarities,q,size,num,debug_features=None,debug=False):
     </html>""")
     debug_txt = ""
     if debug_features is not None:
-        clip_vec_as_json = json.dumps(debug_features.flatten().tolist())
-        debug_txt += f"<a href=search_clip_embedding?q={urllib.parse.quote(clip_vec_as_json)}>CLIP embedding</a>:"
+        clip_vec_as_json = json.dumps({"clip_embedding":debug_features.flatten().tolist()})
+        debug_txt += f"<a href=search?q={urllib.parse.quote(clip_vec_as_json)}>CLIP embedding</a>:"
         debug_txt += "<table><tr>"
-        normalized_debug_features = 255 * (debug_features - feature_minimums) / feature_ranges
+        normalized_debug_features = 255 * (debug_features - rclip_server.feature_minimums) / rclip_server.feature_ranges
         zipped_features = zip(debug_features.flatten(),normalized_debug_features.flatten())
         for idx,(df,nf) in enumerate(zipped_features):
             clr = nf > 255 and 255 or int(nf) < 0 and 0 or int(nf)
@@ -347,10 +390,13 @@ def make_html(similarities,q,size,num,debug_features=None,debug=False):
             if idx % 16 == 15: debug_txt += "</tr><tr>" 
         debug_txt += "</table>"
     bigger_num = (num > 100) and 1000 or num * 10
+    rnd_param = json.dumps({'random_seed':random.randint(0,10000)})
     return tmpl.substitute(__imgs__      = " ".join(imgs),
                            __q__         = html.escape(q),
                            __opposite__  = f"opposite?q={urllib.parse.quote(q)}&num={num}&size={size}",
                            __more__      = f"search?q={urllib.parse.quote(q)}&num={bigger_num}&size={size}",
+                           __title__     = f"rclip_server {html.escape(q)}",
+                           __seed__      = f"search?q={urllib.parse.quote(rnd_param)}",
                            __num__       = num,
                            __size__      = size,
                            __debug_txt__ = debug_txt
@@ -363,5 +409,5 @@ def make_html(similarities,q,size,num,debug_features=None,debug=False):
 if __name__ == "__main__":
     uvicorn.run("rclip_server:app", host='0.0.0.0', port=8000, debug=True, reload=True)
 
-
+# Debug with:
 # ~/proj/rclip/bin/rclip.sh -n dog -f | feh -f - t -g 1000x1000
