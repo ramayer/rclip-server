@@ -102,9 +102,21 @@ class RClipServer:
             return np.asarray([random.choice(self.global_features)])
 
         if seed := data.get('random_seed'):
-            rng = np.random.default_rng(seed)
-            rnd_features = rng.random(512) * rclip_server.feature_ranges + rclip_server.feature_minimums
-            rnd_features /= np.linalg.norm(rnd_features)
+
+            #rng = np.random.default_rng(seed)
+            #rnd_features = rng.random(512) * rclip_server.feature_ranges + rclip_server.feature_minimums
+            #rnd_features /= np.linalg.norm(rnd_features)
+
+            random.seed(seed)
+            def make_rand_vector(dims):
+                """
+                   https://stackoverflow.com/questions/6283080/random-unit-vector-in-multi-dimensional-space 
+                """
+                vec = [random.gauss(0, 1) for i in range(dims)]
+                mag = sum(x**2 for x in vec) ** .5
+                return [x/mag for x in vec]
+            rnd_features = make_rand_vector(512)
+
             return np.asarray([rnd_features])
 
     def compute_image_features(self, images: List[Image.Image]) -> np.ndarray:
