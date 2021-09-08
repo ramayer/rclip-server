@@ -19,6 +19,9 @@ import torch.nn
 import urllib.parse
 import uvicorn
 import fastapi.responses
+import seaborn
+import matplotlib.colors
+import matplotlib.cm
 
 from typing import Optional
 from fastapi import Cookie, FastAPI
@@ -361,15 +364,20 @@ def make_html(similarities,q,size,num,debug_features=None,debug=False):
        $__debug_txt__
     </html>""")
     debug_txt = ""
+    cmap       = seaborn.color_palette('vlag',as_cmap=True)
+    norm       = matplotlib.colors.Normalize(vmin=0, vmax=1)
+    scalar_map = matplotlib.cm.ScalarMappable(norm=norm,cmap=cmap)
+    def get_color(f):
+      rgba = scalar_map.to_rgba(f)
+      return "".join([f'{int(255*x):02x}' for x in rgba[0:3]])
     if debug_features is not None:
         clip_vec_as_json = json.dumps({"clip_embedding":debug_features.flatten().tolist()})
-        debug_txt += f"<a href=search?q={urllib.parse.quote(clip_vec_as_json)}>CLIP embedding</a>:"
+        debug_txt += f"<a href=search?q={urllib.parse.quote(clip_vec_as_json)}>CLIP embedding</a>: (red = above the mean for this dataset; blue = below the mean for this dataset)"
         debug_txt += "<table><tr>"
-        normalized_debug_features = 255 * (debug_features - rclip_server.feature_minimums) / rclip_server.feature_ranges
+        normalized_debug_features = (debug_features - rclip_server.feature_minimums) / rclip_server.feature_ranges
         zipped_features = zip(debug_features.flatten(),normalized_debug_features.flatten())
         for idx,(df,nf) in enumerate(zipped_features):
-            clr = nf > 255 and 255 or int(nf) < 0 and 0 or int(nf)
-            debug_txt += f"""<td style="background:#{clr:02x}{clr:02x}ff">{float(df):0.2g}</td>"""
+            debug_txt += f"""<td style="background:#{get_color(nf)}">{float(df):0.2g}</td>"""
             if idx % 16 == 15: debug_txt += "</tr><tr>" 
         debug_txt += "</table>"
     bigger_num = (num > 100) and 1000 or num * 10
