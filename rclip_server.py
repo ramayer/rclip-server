@@ -238,12 +238,14 @@ async def img(img_id:int):
     hdrs = {'Cache-Control': 'public, max-age=172800'}
     return FileResponse(img_path, headers=hdrs)
 
+import re
 @app.get("/thm/{img_id}")
 async def thm(img_id:int, size:Optional[int]=400):
     img_path = rclip_server.get_path_from_id(img_id)
     print(img_path)
     if wikimedia_info := rclip_server.get_wikimedia_info_from_id(img_id):
         thm_url = wikimedia_info[1]
+        thm_url = re.sub(r'/600px-',f'/{size}px-',thm_url)
         return fastapi.responses.RedirectResponse(thm_url)
     img = Image.open(img_path)
     thm = img.thumbnail((size,3*size/4))
@@ -274,6 +276,7 @@ def dedup_sims(similarities):
 def make_html(similarities,q,size,num,debug_features=None,debug=False):
     num = num or rclip_server.reasonable_num(size)
     sims = dedup_sims(similarities[:num*2])
+    print(sims)
     scores_with_imgids = [(score,rclip_server.idx_to_imgid[idx]) for idx,score in sims[:num]]
     debug=True
     imgs = [f"""
