@@ -8,6 +8,7 @@ import html
 import io
 import json
 import numpy as np
+import os
 import pathlib
 import PIL as pillow
 import random
@@ -72,6 +73,7 @@ class Model:
 class RClipServer:
 
     def __init__(self,rclip_db):
+        print(f"using {rclip_db}")
         self._db    = rclip_db
         self._model = Model()
         self.filepaths:        List[str]            = []
@@ -190,13 +192,16 @@ class RClipServer:
 
 ################################################################################
 # Create FastAPI server
+#   Uses argparse and environment variables because uvicorn swallows args
 ################################################################################
 
+default_db                = (os.environ.get("CLIP_DB") or
+                             pathlib.Path.home() / '.local/share/rclip/db.sqlite3')
 parser                    = argparse.ArgumentParser()
-default_db                = pathlib.Path.home() / '.local/share/rclip/db.sqlite3'
 parser.add_argument('--db','-d',default=str(default_db),help="path to rclip's database")
 args,unk                  = parser.parse_known_args()
-rclip_server              = RClipServer(args.db)
+if os.path.exists(args.db):
+  rclip_server              = RClipServer(args.db)
 app                       = FastAPI()
 
 ###############################################################################
@@ -413,7 +418,12 @@ def make_html(similarities,q,size,num,debug_features=None,debug=False):
 ###############################################################################
 
 if __name__ == "__main__":
-    uvicorn.run("rclip_server:app", host='0.0.0.0', port=8000, debug=True, reload=True)
+  # uvicorn.run("rclip_server:app", host='0.0.0.0', port=8000, debug=True, reload=True)
+  print("Best run using a command like like:")
+  print(" uvicorn rclip_server:app")
+  print("to launch an instance using the user's default rclip database, or")
+  print(" env CLIP_DB=wikimedia_quality.sqlite3 uvicorn rclip_server:app --reload")
+  print("to run a dev instance specifying a different index")
 
 # Debug with:
 # ~/proj/rclip/bin/rclip.sh -n dog -f | feh -f - t -g 1000x1000
