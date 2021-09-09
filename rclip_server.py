@@ -24,6 +24,7 @@ import seaborn
 import matplotlib.colors
 import matplotlib.cm
 
+from dataclasses import dataclass,field
 from typing import Optional
 from fastapi import Cookie, FastAPI
 from fastapi.responses import FileResponse,HTMLResponse
@@ -34,84 +35,52 @@ from tqdm import tqdm
 from typing import Callable, List, Tuple, cast
 from typing import Iterable, List, NamedTuple, Tuple, TypedDict, cast
 
-###############################################################################
-# Plagerized from rclip
-###############################################################################
-
-class Model:
-  VECTOR_SIZE = 512
-  _device = 'cpu'
-  _model_name = 'ViT-B/32'
-
-  def __init__(self):
-    model, preprocess = cast(
-      Tuple[clip.model.CLIP, Callable[[Image.Image], torch.Tensor]],
-      clip.load(self._model_name, device=self._device)
-    )
-    self._model = model
-    self._preprocess = preprocess
-
-  def compute_image_features(self, images: List[Image.Image]) -> np.ndarray:
-    images_preprocessed = torch.stack([self._preprocess(thumb) for thumb in images]).to(self._device)
-    with torch.no_grad():
-      image_features = self._model.encode_image(images_preprocessed)
-      image_features /= image_features.norm(dim=-1, keepdim=True)
-    return image_features.cpu().numpy()
-
-  def compute_text_features(self, text: str) -> np.ndarray:
-    with torch.no_grad():
-      text_encoded = self._model.encode_text(clip.tokenize(text).to(self._device))
-      text_encoded /= text_encoded.norm(dim=-1, keepdim=True)
-    return text_encoded.cpu().numpy()
-
-###############################################################################
-# Paraphrased from rclip
-###############################################################################
-
-#model = Model()
+@dataclass
+class ImageInfo:
+    image_id        : int
+    image_index     : int
+    filename        : str
+    thumbnail_url   : str = None
+    detail_url      : str = None
 
 class RClipServer:
 
-    def __init__(self,rclip_db):
+    def __init__(self,rclip_db, model_name='ViT-B/32', device='cpu'):
         print(f"using {rclip_db}")
-        self._db    = rclip_db
-        self._model = Model()
-        self.filepaths:        List[str]            = []
-        self.wikimedia_info:   List[Tuple(str,str)] = []
-        self.global_features:  List[np.ndarray]     = []
-        self.img_ids:          List[int]            = []
-        self.filepaths,self.global_features,self.img_ids,self.wikimedia_info = self._get_features('')
-        self.feature_minimums:np.ndarray = functools.reduce(lambda x,y: np.minimum(x,y), self.global_features)
-        self.feature_maximums:np.ndarray = functools.reduce(lambda x,y: np.maximum(x,y), self.global_features)
+        self._db        = rclip_db
+        self.device     = device
+        self.model_name = model_name
+
+        clip_model, clip_preprocess = clip.load(model_name,device)
+        self.clip_model:      clip.model.CLIP                        = clip_model
+        self.clip_preprocess: Callable[[Image.Image], torch.Tensor]  = clip_preprocess
+
+        self.image_embeddings:numpy.ndarray         = None
+        self.image_info:ImageInfo                   = None
+
+        self.load_image_embeddings('')
+        self.feature_minimums:np.ndarray = functools.reduce(lambda x,y: np.minimum(x,y), self.image_embeddings)
+        self.feature_maximums:np.ndarray = functools.reduce(lambda x,y: np.maximum(x,y), self.image_embeddings)
         self.feature_ranges:np.ndarray   = self.feature_maximums - self.feature_minimums
-        self.idx_to_imgid = dict(enumerate(self.img_ids))
-        self.imgid_to_idx = dict([(y,x) for x,y in enumerate(self.img_ids)])
-        print(f"found {len(self.img_ids)} images")
+        self.imgid_to_idx = dict([(ii.image_id,ii.image_index) for ii in self.image_info])
+        print(f"found {len(self.image_info)} images")
 
     def guess_user_intent(self,q):
         if not q.startswith('{'):
-            return self.compute_text_features(q)
+            return self.get_text_embedding(q)
 
         data = json.loads(q)
 
         if img_id := data.get('image_id'):
-            return np.asarray([self.global_features[self.imgid_to_idx[img_id]]])
-            img_path = self.get_path_from_id(img_id)
-            img     = Image.open(img_path)
-            return self.compute_image_features([img])
+            return np.asarray([self.image_embeddings[self.imgid_to_idx[img_id]]])
 
         if embedding := data.get('clip_embedding'):
             return np.asarray([embedding])
 
         if seed := data.get('random_img'):
-            return np.asarray([random.choice(self.global_features)])
+            return np.asarray([random.choice(self.image_embeddings)])
 
         if seed := data.get('random_seed'):
-
-            #rng = np.random.default_rng(seed)
-            #rnd_features = rng.random(512) * rclip_server.feature_ranges + rclip_server.feature_minimums
-            #rnd_features /= np.linalg.norm(rnd_features)
-
             random.seed(seed)
             def make_rand_vector(dims):
                 """
@@ -121,30 +90,37 @@ class RClipServer:
                 mag = sum(x**2 for x in vec) ** .5
                 return [x/mag for x in vec]
             rnd_features = make_rand_vector(512)
-
             return np.asarray([rnd_features])
 
-    def compute_image_features(self, images: List[Image.Image]) -> np.ndarray:
-        return self._model.compute_image_features(images)
+    def get_text_embedding(self,words):
+        with torch.no_grad():
+            tokenized_text = clip.tokenize(words).to(self.device)
+            text_encoded   = self.clip_model.encode_text(tokenized_text)
+            text_encoded  /= text_encoded.norm(dim=-1, keepdim=True)
+            return text_encoded.cpu().numpy()
 
-    def compute_text_features(self, text:str) -> np.ndarray:
-        return self._model.compute_text_features(text)
+    def get_image_embedding(self,images):
+        with torch.no_grad():
+            preprocessed = torch.stack([self._preprocess(thumb) for thumb in images]).to(self.device)
+            image_features = self.clip_model.encode_image(preprocessed)
+            image_features /= image_features.norm(dim=-1, keepdim=True)
+            return image_features.cpu().numpy()
 
-    def get_path_from_id(self,img_id:int):
-        return self.filepaths[self.imgid_to_idx[img_id]]
-
-    def get_wikimedia_info_from_id(self,img_id:int):
-        return self.wikimedia_info[self.imgid_to_idx[img_id]]
+    def image_info_from_id(self,img_id:int):
+        return self.image_info[self.imgid_to_idx[img_id]]
 
     # Paraphrased From RClip
     def find_similar_images(self,desired_features: np.ndarray) -> List[Tuple[float, int]]:
-        item_features = self.global_features
+        item_features = self.image_embeddings
         similarities = (desired_features @ item_features.T).squeeze(0).tolist()
         sorted_similarities = sorted(enumerate(similarities), key=lambda x: x[1], reverse=True)
         return sorted_similarities
 
+
     # Paraphrased From RClip
-    def load_vecs(self,path):
+    def load_image_embeddings(self,directory: str) -> Tuple[List[str], np.ndarray]:
+        ii: list[ImageInfo] = []
+        image_embedding_list: list[np.ndarray] = []
         with sqlite3.connect(args.db) as con:
             con.row_factory = sqlite3.Row
             rclip_sql =  f'''
@@ -153,33 +129,28 @@ class RClipServer:
                  WHERE filepath LIKE ? 
                    AND deleted IS NULL
             '''
-            return con.execute(rclip_sql,(path + '%',))
+            rows = con.execute(rclip_sql,('%',))
+            cols = set([r[0] for r in rows.description])
+            for (idx,row) in enumerate(rows):
+                image_embedding_list.append(np.frombuffer(row['vector'], np.float32))
+                if 'wikimedia_descr_url' in cols:
+                    ii.append(ImageInfo(image_id        = row['id'],
+                                        image_index     = idx,
+                                        filename        = row['filepath'],
+                                        thumbnail_url   = row['wikimedia_thumb_url'],
+                                        detail_url      = row['wikimedia_descr_url']))
+                else:
+                    ii.append(ImageInfo(image_id        = row['id'],
+                                        image_index     = idx,
+                                        filename        = row['filepath']))
+        self.image_embeddings = np.stack(image_embedding_list)
+        self.image_info       = ii
 
-    # Paraphrased From RClip
-    def _get_features(self,directory: str) -> Tuple[List[str], np.ndarray]:
-        filepaths: List[str] = []
-        features: List[np.ndarray] = []
-        img_ids: List[int] = []
-        wikimedia_info: List[Tuple(str,str)] = []
-        print("here")
-        rows = self.load_vecs('%')
-        cols = set([r[0] for r in rows.description])
-        for image in rows:
-          filepaths.append(image['filepath'])
-          features.append(np.frombuffer(image['vector'], np.float32))
-          img_ids.append(image['id'])
-          if 'wikimedia_descr_url' in cols:
-              wikimedia_info.append((image['wikimedia_descr_url'],
-                                     image['wikimedia_thumb_url']))
-          else:
-              wikimedia_info.append(None)
-        return filepaths, np.stack(features), img_ids, wikimedia_info
-
-    def censor(self,path):
+    def censor(self,img_id):
         with sqlite3.connect(args.db) as con:
             con.row_factory = sqlite3.Row
-            rclip_sql =  f'UPDATE images SET deleted=True where filepath = ?'
-            return con.execute(rclip_sql,(path,))
+            rclip_sql =  f'UPDATE images SET deleted=True where id = ?'
+            return con.execute(rclip_sql,(img_id,))
         self.__init__(self._db)
 
     def reasonable_num(self,size:int):
@@ -189,6 +160,33 @@ class RClipServer:
                 or size < 600 and 24
                 or size < 800 and 12
                 or 6)
+
+    # Show candidate words for picture
+    
+    def find_best_matches(self,desired_embedding: np.ndarray, all_embeddings) -> list[tuple[float, int]]:
+        similarities = (desired_embedding @ all_embeddings.T).squeeze(0).tolist()
+        sorted_similarities = sorted(enumerate(similarities), key=lambda x: x[1], reverse=True)
+        return sorted_similarities
+
+    def load_word_embeddings(self,word_embedding_db):
+        word_features: list[np.ndarray] = []
+        words:         list[str] = []
+        with sqlite3.connect(args.db) as con:
+            con.row_factory = sqlite3.Row
+            sql =  f'''
+                    SELECT *
+                      FROM words 
+                      WHERE lower(words) = words
+                '''
+            rows = con.execute(sql,())
+
+        for row in rows:
+            word_features.append(np.frombuffer(row['vector'], np.float32))
+            words.append(row['words'])
+
+        self.word_embeddings = np.stack(word_features)
+        self.words           = words
+
 
 ################################################################################
 # Create FastAPI server
@@ -201,7 +199,7 @@ parser                    = argparse.ArgumentParser()
 parser.add_argument('--db','-d',default=str(default_db),help="path to rclip's database")
 args,unk                  = parser.parse_known_args()
 if os.path.exists(args.db):
-  rclip_server              = RClipServer(args.db)
+  rclip_server            = RClipServer(args.db)
 app                       = FastAPI()
 
 ###############################################################################
@@ -226,12 +224,12 @@ async def opposite(q:str, num:Optional[int] = None, size:int=Cookie(400)):
 
 @app.get("/conceptmap", response_class=HTMLResponse)
 async def conceptmap(q:str, m:str=None, p:str=None,num:int = 36, size:int=400, debug:bool=False):
-    features = rclip_server.compute_text_features(q)
+    features = rclip_server.get_text_embedding(q)
     if p:
-      plus_features = rclip_server.compute_text_features(p)
+      plus_features = rclip_server.get_text_embedding(p)
       features = features + plus_features
     if m:
-      minus_features = rclip_server.compute_text_features(m)
+      minus_features = rclip_server.get_text_embedding(m)
       features = features - minus_features
     combined_features = features
     print(features)
@@ -241,8 +239,7 @@ async def conceptmap(q:str, m:str=None, p:str=None,num:int = 36, size:int=400, d
 
 @app.get("/censor", response_class=HTMLResponse)
 async def censor_endpoint(img_id:int):
-    path = rclip_server.get_path_from_id(img_id)
-    rclip_server.censor(path)
+    rclip_server.censor(img_id)
     return(f"<html>Ok, {path} is censored</html>")
 
 @app.get("/reload", response_class=HTMLResponse)
@@ -252,35 +249,34 @@ async def reload():
 
 @app.get("/img/{img_id}")
 async def img(img_id:int):
-    if wikimedia_info := rclip_server.get_wikimedia_info_from_id(img_id):
-        return fastapi.responses.RedirectResponse(wikimedia_info[0])
-    img_path = rclip_server.get_path_from_id(img_id)
-    hdrs = {'Cache-Control': 'public, max-age=172800'}
-    return FileResponse(img_path, headers=hdrs)
+  ii = rclip_server.image_info_from_id(img_id)
+  if ii.detail_url:
+        return fastapi.responses.RedirectResponse(ii.detail_url)
+  hdrs = {'Cache-Control': 'public, max-age=172800'}
+  return FileResponse(ii.filename, headers=hdrs)
 
 import re
 @app.get("/thm/{img_id}")
 async def thm(img_id:int, size:Optional[int]=400):
-    img_path = rclip_server.get_path_from_id(img_id)
-    print(img_path)
-    if wikimedia_info := rclip_server.get_wikimedia_info_from_id(img_id):
-        thm_url = wikimedia_info[1]
-        thm_url = re.sub(r'/600px-',f'/{size}px-',thm_url)
-        return fastapi.responses.RedirectResponse(thm_url)
-    img = Image.open(img_path)
-    thm = img.thumbnail((size,3*size/4))
-    buf = io.BytesIO()
-    if img.mode != 'RGB': img = img.convert('RGB')
-    img.save(buf,format="jpeg")
-    buf.seek(0)
-    hdrs = {'Cache-Control': 'public, max-age=172800'}
-    return StreamingResponse(buf,media_type="image/jpeg", headers=hdrs)
+  ii = rclip_server.image_info_from_id(img_id)
+  if ii.thumbnail_url:
+    thm_url = ii.thumbnail_url
+    thm_url = re.sub(r'/600px-',f'/{size}px-',thm_url)
+    return fastapi.responses.RedirectResponse(thm_url)
+  img = Image.open(ii.filename)
+  thm = img.thumbnail((size,3*size/4))
+  buf = io.BytesIO()
+  if img.mode != 'RGB': img = img.convert('RGB')
+  img.save(buf,format="jpeg")
+  buf.seek(0)
+  hdrs = {'Cache-Control': 'public, max-age=172800'}
+  return StreamingResponse(buf,media_type="image/jpeg", headers=hdrs)
 
 @app.get("/info/{img_id}")
 async def info(img_id:int):
     img_path = rclip_server.get_path_from_id(img_id)
     img     = Image.open(img_path)
-    clip_embedding = rclip_server.compute_image_features([img])
+    clip_embedding = rclip_server.get_image_embedding([img])
     info = {'path':img_path,'embedding':clip_embedding.tolist()}
     return fastapi.responses.JSONResponse(content=info)
 
@@ -297,19 +293,19 @@ def make_html(similarities,q,size,num,debug_features=None,debug=False):
     num = num or rclip_server.reasonable_num(size)
     sims = dedup_sims(similarities[:num*2])
     print(sims)
-    scores_with_imgids = [(score,rclip_server.idx_to_imgid[idx]) for idx,score in sims[:num]]
+    scores_with_imgids = [(score,rclip_server.image_info[idx]) for idx,score in sims[:num]]
     debug=True
     imgs = [f"""
              <div style="">
-                <a href="/img/{img_id}" target="_blank"><img src="/thm/{img_id}?size={size}" style='max-width:{size}px; max-height:{size}px'></a>
+                <a href="/img/{ii.image_id}" target="_blank"><img src="/thm/{ii.image_id}?size={size}" style='max-width:{size}px; max-height:{size}px'></a>
                 <br>
                 {str(int(100*s))+'% similarity'}
-                <a href='/search?q={urllib.parse.quote(json.dumps({"image_id":img_id,'path':rclip_server.get_path_from_id(img_id)}))}'>more like this</a>
-                <!-- <a href="/censor?img_id={img_id}">censor this</a>-->
-                {debug and "" or "<!--"} | <a href="/mut?q={img_id}">unlike this</a> {debug and "" or "-->"}
+                <a href='/search?q={urllib.parse.quote(json.dumps({"image_id":ii.image_id,'path':ii.filename}))}'>more like this</a>
+                <!-- <a href="/censor?img_id={ii.image_id}">censor this</a>-->
+                {debug and "" or "<!--"} | <a href="/mut?q={ii.image_id}">unlike this</a> {debug and "" or "-->"}
              </div>
              """ 
-            for s,img_id in scores_with_imgids
+            for s,ii in scores_with_imgids
             ]
     tmpl = string.Template("""<html>
         <title>$__title__</title>
