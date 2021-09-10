@@ -171,22 +171,58 @@ class RClipServer:
     def load_word_embeddings(self,word_embedding_db):
         word_features: list[np.ndarray] = []
         words:         list[str] = []
-        with sqlite3.connect(args.db) as con:
+        with sqlite3.connect(word_embedding_db) as con:
             con.row_factory = sqlite3.Row
             sql =  f'''
                     SELECT *
                       FROM words 
                       WHERE lower(words) = words
-                '''
+           '''
             rows = con.execute(sql,())
-
         for row in rows:
             word_features.append(np.frombuffer(row['vector'], np.float32))
             words.append(row['words'])
-
         self.word_embeddings = np.stack(word_features)
         self.words           = words
+        self.word_to_idx     = dict([(word,idx) for idx,word in enumerate(words)])
 
+    def best_words(self,desired_embedding):
+        best_matches = self.find_best_matches(desired_embedding,self.word_embeddings)
+        return [(idx,self.words[idx],score) for idx,score in best_matches]
+
+    def guess_phrase_embedding(self,words):
+        embeddings = [self.word_embeddings[self.word_to_idx[word]] for word in words]
+        combined   = functools.reduce(lambda x,y: x + y,embeddings)
+        normalized = combined / np.linalg.norm(combined)
+        return normalized
+
+    def guess_phrase_score(self,desired_embedding,words):
+        pe = self.guess_phrase_embedding(words)
+        return (desired_embedding @ pe.T).squeeze(0).tolist()
+
+    # slow - and the estimate above is pretty close.
+    def calculate_phrase_score(self,desired_embedding,words):
+        pe = self.get_text_embedding(words)
+        return (desired_embedding @ pe.T).squeeze(0).tolist()[0]
+
+    def best_phrases(self,desired_embedding):
+        best_words    = self.best_words(desired_embedding)[0:50]
+        num_per_group = 1000
+        candidate_phrases   = ([[w[1] for w in random.sample(best_words, 2)] for i in range(num_per_group)] +
+                               [[w[1] for w in random.sample(best_words, 3)] for i in range(num_per_group)] +
+                               [[w[1] for w in random.sample(best_words, 4)] for i in range(num_per_group)]
+                               )
+        candidate_phrases_with_scores = [(" ".join(words),
+                                          self.guess_phrase_score(desired_embedding,words))
+                                          for words in candidate_phrases
+                                        ]
+        sorted_phrases = sorted(candidate_phrases_with_scores,key=lambda p:p[1],reverse=True)
+        #candidate_word_vecs           = [self.word_embeddings[idx] for idx,word,score in best_words]
+        #first_word_vec                = candidate_word_vecs[0]
+        #candidate_phrase_vecs         = [(v + first_word_vec) / np.linalg.norm(v + first_word_vec) for v in candidate_word_vecs]
+        #candidate_phrase_scores       = [(desired_embedding @ cv.T).squeeze(0).tolist() for cv in candidate_phrase_vecs]
+        #candidate_phrases_with_scores = [(bw[0],bw[1],bw[2],s) for bw,s in zip(best_words,candidate_phrase_scores)]
+        return sorted_phrases[:100]
 
 ################################################################################
 # Create FastAPI server
@@ -200,6 +236,7 @@ parser.add_argument('--db','-d',default=str(default_db),help="path to rclip's da
 args,unk                  = parser.parse_known_args()
 if os.path.exists(args.db):
   rclip_server            = RClipServer(args.db)
+  rclip_server.load_word_embeddings('words.sqlite3')
 app                       = FastAPI()
 
 ###############################################################################
@@ -292,12 +329,11 @@ def dedup_sims(similarities):
 def make_html(similarities,q,size,num,debug_features=None,debug=False):
     num = num or rclip_server.reasonable_num(size)
     sims = dedup_sims(similarities[:num*2])
-    print(sims)
     scores_with_imgids = [(score,rclip_server.image_info[idx]) for idx,score in sims[:num]]
     debug=True
     imgs = [f"""
-             <div style="">
-                <a href="/img/{ii.image_id}" target="_blank"><img src="/thm/{ii.image_id}?size={size}" style='max-width:{size}px; max-height:{size}px'></a>
+             <div>
+                <a href="/img/{ii.image_id}" target="_blank"><img src="/thm/{ii.image_id}?size={size}"></a>
                 <br>
                 {str(int(100*s))+'% similarity'}
                 <a href='/search?q={urllib.parse.quote(json.dumps({"image_id":ii.image_id,'path':ii.filename}))}'>more like this</a>
@@ -310,15 +346,18 @@ def make_html(similarities,q,size,num,debug_features=None,debug=False):
     tmpl = string.Template("""<html>
         <title>$__title__</title>
        <style>
-          body {background-color: #ccc; width: 100%; font-family:Ariel}
+          body {background-color: #ccc; width: 100%; margin: 0px; font-family:-apple-system, BlinkMacSystemFont, "Segoe UI", "Ubuntu", "Helvetica Neue", sans-serif}
           form {margin:0px}
-          #header,#footer {background-color: #888; padding: 10px 20px 10px 20px; }
-          .images div{display:inline-block; width:${__size__}px}
-          #q {width:100%}
+          #header,#footer {background-color: #888; padding: 20px 20px 10px 20px; }
+          div.images {padding:2px;; margin:auto;}
+          .images div{display:inline-block; width:${__size__}px; margin:auto;}
+          .images img{display:inline-block; max-width:${__size__}px;max-height:${__hsize__}px}
+          #q {width:99%}
           #lq {font-size: 20pt}
           #sizes,.images {font-size: 10pt}
           a:link {text-decoration: none}
           a:hover {text-decoration: underline}
+          th {text-align:left}
        </style>
        <script>
             function setCookie(cname, cvalue, exdays) {
@@ -348,7 +387,7 @@ def make_html(similarities,q,size,num,debug_features=None,debug=False):
        <div id="header">
        <form action="search">
            <table width="100%"><tr>
-            <td width="10%"><label for="q" id="lq"><a href="/" style="color:black; text-decoration: none">Search:</a></label></td>
+            <td width="10%"><label for="q" id="lq"><a href="/" style="color:black;">Search:</a></label></td>
             <td width="80%"><input name="q" id='q' value="$__q__" style="width: width:800px"></td>
             <td width="10%"><input type="submit" value="Go"></td>
            </tr><tr><td></td>
@@ -388,6 +427,7 @@ def make_html(similarities,q,size,num,debug_features=None,debug=False):
       return "".join([f'{int(255*x):02x}' for x in rgba[0:3]])
     if debug_features is not None:
         clip_vec_as_json = json.dumps({"clip_embedding":debug_features.flatten().tolist()})
+        debug_txt += "<h2>CLIP Embedding</h2>"
         debug_txt += f"<a href=search?q={urllib.parse.quote(clip_vec_as_json)}>CLIP embedding</a>: (red = above the mean for this dataset; blue = below the mean for this dataset)"
         debug_txt += "<table><tr>"
         normalized_debug_features = (debug_features - rclip_server.feature_minimums) / rclip_server.feature_ranges
@@ -396,6 +436,23 @@ def make_html(similarities,q,size,num,debug_features=None,debug=False):
             debug_txt += f"""<td style="background:#{get_color(nf)}">{float(df):0.2g}</td>"""
             if idx % 16 == 15: debug_txt += "</tr><tr>" 
         debug_txt += "</table>"
+
+        debug_txt += "<h2>Similar words and phrases</h2>"
+        best_words = rclip_server.best_words(debug_features)[0:50]
+        debug_txt += "<table style='width:40%; float:left'><tr><th>word</th><th>score</th></tr>\n"
+        for idx,word,score in best_words:
+            u = f'/search?q={urllib.parse.quote(word)}'
+            debug_txt += f"<tr><td><a href='{u}'>{html.escape(word)}</a></td><td>{int(score*100)}%</td></tr>"
+        debug_txt += "</table>"
+
+        best_phrases = rclip_server.best_phrases(debug_features)[0:50]
+        debug_txt += "<table style='width:40%; float:left'><tr><th>phrases</th><th>est. score</th></tr>\n"
+        for phrase,score in best_phrases:
+            u = f'/search?q={urllib.parse.quote(phrase)}'
+            debug_txt += f"<tr><td><a href='{u}'>{html.escape(phrase)}</a></td><td>{int(score*100)}%</td></tr>"
+        debug_txt += "</table>"
+
+
     bigger_num = (num > 100) and 1000 or num * 10
     rnd_param = json.dumps({'random_seed':random.randint(0,10000)})
     return tmpl.substitute(__imgs__      = " ".join(imgs),
@@ -406,6 +463,7 @@ def make_html(similarities,q,size,num,debug_features=None,debug=False):
                            __rnd__       = f"search?q={urllib.parse.quote(rnd_param)}",
                            __num__       = num,
                            __size__      = size,
+                           __hsize__     = int(size*3/4),
                            __debug_txt__ = debug_txt
                            )
 
@@ -421,5 +479,10 @@ if __name__ == "__main__":
   print(" env CLIP_DB=wikimedia_quality.sqlite3 uvicorn rclip_server:app --reload")
   print("to run a dev instance specifying a different index")
 
-# Debug with:
-# ~/proj/rclip/bin/rclip.sh -n dog -f | feh -f - t -g 1000x1000
+# Debug the rclip index using commands like:
+#
+#    ~/proj/rclip/bin/rclip.sh -n dog -f | feh -f - t -g 1000x1000
+#
+# If using nginx, add the following config to allow the large GET reqests with clip embedding paramaters:
+#
+#   large_client_header_buffers 16 16k;
