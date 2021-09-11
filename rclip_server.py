@@ -11,6 +11,7 @@ import numpy as np
 import os
 import pathlib
 import PIL as pillow
+import PIL.Image
 import random
 import requests.utils
 import sqlite3
@@ -65,7 +66,23 @@ class RClipServer:
         self.imgid_to_idx = dict([(ii.image_id,ii.image_index) for ii in self.image_info])
         print(f"found {len(self.image_info)} images")
 
+    def download_image(self,url) -> PIL.Image.Image:
+
+        headers = {'User-agent': # https://meta.wikimedia.org/wiki/User-Agent_policy
+                   "rclip_server - similar image finder "+
+                   "(http://152.67.254.195/ - still working on setting up contact info)"}
+        resp = requests.get(url,headers=headers)
+        if resp.headers['Content-Type'] not in ['image/jpeg','image/png','image/gif']:
+            raise(Exception(f"unsupported {resp.headers['Content-Type']}"))
+        stream = io.BytesIO(resp.content)
+        img = pillow.Image.open(stream)
+        return img
+        
     def guess_user_intent(self,q):
+        if re.match(r'^https?://',q):
+            img = self.download_image(q)
+            return self.get_image_embedding([img])
+
         if not q.startswith('{'):
             return self.get_text_embedding(q)
 
@@ -101,7 +118,7 @@ class RClipServer:
 
     def get_image_embedding(self,images):
         with torch.no_grad():
-            preprocessed = torch.stack([self._preprocess(thumb) for thumb in images]).to(self.device)
+            preprocessed = torch.stack([self.clip_preprocess(img) for img in images]).to(self.device)
             image_features = self.clip_model.encode_image(preprocessed)
             image_features /= image_features.norm(dim=-1, keepdim=True)
             return image_features.cpu().numpy()
