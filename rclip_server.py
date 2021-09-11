@@ -344,19 +344,22 @@ def make_html(similarities,q,size,num,debug_features=None,debug=False):
             for s,ii in scores_with_imgids
             ]
     tmpl = string.Template("""<html>
-        <title>$__title__</title>
+       <title>$__title__</title>
        <style>
-          body {background-color: #ccc; width: 100%; margin: 0px; font-family:-apple-system, BlinkMacSystemFont, "Segoe UI", "Ubuntu", "Helvetica Neue", sans-serif}
+          body {background-color: #444; width: 100%; margin: 0px; 
+                color:white;
+                font-family:-apple-system, BlinkMacSystemFont, "Segoe UI", "Ubuntu", "Helvetica Neue", sans-serif;
+          }
           form {margin:0px}
-          #header,#footer {background-color: #888; padding: 20px 20px 10px 20px; }
+          #header,#footer {background-color: #444; padding: 20px 20px 10px 20px; }
           div.images {padding:2px;; margin:auto;}
           .images div{display:inline-block; width:${__size__}px; margin:auto;}
           .images img{display:inline-block; max-width:${__size__}px;max-height:${__hsize__}px}
           #q {width:99%}
           #lq {font-size: 20pt}
           #sizes,.images {font-size: 10pt}
-          a:link {text-decoration: none}
-          a:hover {text-decoration: underline}
+          a {text-decoration: none; color: #ccccff}
+          a:hover {text-decoration: underline;}
           th {text-align:left}
        </style>
        <script>
@@ -387,7 +390,7 @@ def make_html(similarities,q,size,num,debug_features=None,debug=False):
        <div id="header">
        <form action="search">
            <table width="100%"><tr>
-            <td width="10%"><label for="q" id="lq"><a href="/" style="color:black;">Search:</a></label></td>
+            <td width="10%"><label for="q" id="lq"><a href="/">Search:</a></label></td>
             <td width="80%"><input name="q" id='q' value="$__q__" style="width: width:800px"></td>
             <td width="10%"><input type="submit" value="Go"></td>
            </tr><tr><td></td>
@@ -419,13 +422,15 @@ def make_html(similarities,q,size,num,debug_features=None,debug=False):
        $__debug_txt__
     </html>""")
     debug_txt = ""
-    cmap       = seaborn.color_palette('vlag',as_cmap=True)
+    cmap       = seaborn.color_palette('icefire',as_cmap=True)
     norm       = matplotlib.colors.Normalize(vmin=0, vmax=1)
     scalar_map = matplotlib.cm.ScalarMappable(norm=norm,cmap=cmap)
     def get_color(f):
       rgba = scalar_map.to_rgba(f)
       return "".join([f'{int(255*x):02x}' for x in rgba[0:3]])
     if debug_features is not None:
+        debug_txt += "<div style='width:100%'><div style='margin:auto'>"
+
         clip_vec_as_json = json.dumps({"clip_embedding":debug_features.flatten().tolist()})
         debug_txt += "<h2>CLIP Embedding</h2>"
         debug_txt += f"<a href=search?q={urllib.parse.quote(clip_vec_as_json)}>CLIP embedding</a>: (red = above the mean for this dataset; blue = below the mean for this dataset)"
@@ -451,7 +456,7 @@ def make_html(similarities,q,size,num,debug_features=None,debug=False):
             u = f'/search?q={urllib.parse.quote(phrase)}'
             debug_txt += f"<tr><td><a href='{u}'>{html.escape(phrase)}</a></td><td>{int(score*100)}%</td></tr>"
         debug_txt += "</table>"
-
+        debug_txt += "</div></div>"
 
     bigger_num = (num > 100) and 1000 or num * 10
     rnd_param = json.dumps({'random_seed':random.randint(0,10000)})
