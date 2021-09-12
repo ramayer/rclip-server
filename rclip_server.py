@@ -111,6 +111,17 @@ class RClipServer:
             rnd_features = make_rand_vector(512)
             return np.asarray([rnd_features])
 
+        if data.get('plus') or data.get('minus'):
+            p = data.get("plus")
+            m = data.get("minus")
+            if not p: p = []
+            if not m: m = []
+            if isinstance(p,str): p = [p]
+            if isinstance(m,str): m = [m]
+            plusses = [ 1 * self.guess_user_intent(q) for q in p]
+            minuses = [-1 * self.guess_user_intent(q) for q in m]
+            return functools.reduce(lambda x,y: x+y, plusses+minuses)
+
     def get_text_embedding(self,words):
         with torch.no_grad():
             tokenized_text = clip.tokenize(words).to(self.device)
@@ -293,28 +304,6 @@ def home():
   hdrs = {'Cache-Control': 'public, max-age=3600'}
   return FileResponse('./assets/rclip_server.html', headers=hdrs)
 
-@app.get("/search_api")
-async def search_api(q:str, num:Optional[int] = None):
-    desired_features = rclip_server.guess_user_intent(q)
-    results = rclip_server.find_similar_images(desired_features)
-    top_results = results[0:num or 12]
-    r = [(rclip_server.image_info[idx].image_id,score) for idx,score in top_results]
-    return r
-
-@app.get("/visualize_clip_embedding")
-async def vixualize_clip_embedding_api(q:str, num:Optional[int] = None):
-    desired_features = rclip_server.guess_user_intent(q)
-    html_frag = rclip_server.visualize_clip_embedding(desired_features)
-    return({'clip_embedding':html_frag})
-
-@app.get("/similar_words")
-async def similar_words(q:str, num:Optional[int] = None):
-    desired_features = rclip_server.guess_user_intent(q)
-    similar_words    = rclip_server.best_words(desired_features)[0:50]
-    similar_phrases  = rclip_server.best_phrases(desired_features)[0:50]
-    result = {'similar_words':similar_words,'similar_phrases':similar_phrases}
-    return result
-
 @app.get("/search", response_class=HTMLResponse)
 async def search(q:str, num:Optional[int] = None, size:int=Cookie(400)):
     #t0 = time.time()
@@ -326,7 +315,30 @@ async def search(q:str, num:Optional[int] = None, size:int=Cookie(400)):
     #print(t1-t0,t2-t1,t3-t2,t4-t3)
     #results=q=size=num=desired_features=similar_words=similar_phrases=None
     #return make_html(results,q,size,num,debug_features = desired_features,words=similar_words, phrases=similar_phrases)
+    hdrs = {'Cache-Control': 'public, max-age=0'}
     return FileResponse('./assets/rclip_server.html', headers=hdrs)
+
+@app.get("/search_api")
+async def search_api(q:str, num:Optional[int] = None):
+    desired_features = rclip_server.guess_user_intent(q)
+    results = rclip_server.find_similar_images(desired_features)
+    top_results = results[0:num or 12]
+    r = [(rclip_server.image_info[idx].image_id,score) for idx,score in top_results]
+    return r
+
+@app.get("/similar_words")
+async def similar_words(q:str, num:Optional[int] = None):
+    desired_features = rclip_server.guess_user_intent(q)
+    similar_words    = rclip_server.best_words(desired_features)[0:50]
+    similar_phrases  = rclip_server.best_phrases(desired_features)[0:50]
+    result = {'similar_words':similar_words,'similar_phrases':similar_phrases}
+    return result
+
+@app.get("/visualize_clip_embedding")
+async def vixualize_clip_embedding_api(q:str, num:Optional[int] = None):
+    desired_features = rclip_server.guess_user_intent(q)
+    html_frag = rclip_server.visualize_clip_embedding(desired_features)
+    return({'clip_embedding':html_frag})
 
 @app.get("/opposite", response_class=HTMLResponse)
 async def opposite(q:str, num:Optional[int] = None, size:int=Cookie(400)):

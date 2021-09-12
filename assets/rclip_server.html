@@ -1,29 +1,32 @@
 <html>
   <head>
-    <!-- <script src="https://unpkg.com/vue@3.2.11/dist/vue.global.prod.js"> --> <!-- prod --> 
-      <!-- <script src="https://unpkg.com/vue@next"></script> --> <!-- dev -->
-      <script src="/js/vue.global.prod.js"></script> <!-- prod --> 
+    <!-- <script src="https://unpkg.com/vue@next"></script> --> <!-- dev -->
+    <script src="/js/vue.global.prod.js"></script> <!-- prod --> 
   </head>
   <title>$__title__</title>
   <style>
-    body {background-color: #334; width: 100%; margin: 0px; 
-          color:white;
-          font-family:-apple-system, BlinkMacSystemFont, "Segoe UI", "Ubuntu", "Helvetica Neue", sans-serif;
-         }
+    body {
+	background-color: #334;
+	width: 100%;
+	min-height: 100vh;
+	margin: 0px; 
+        color:white;
+        font-family:-apple-system, BlinkMacSystemFont, "Segoe UI", "Ubuntu", "Helvetica Neue", sans-serif;
+    }
     th {text-align:left}
     form {margin:0px}
-    #header,#footer,.header {background-color: #335; padding: 20px 20px 10px 20px; }
-    zdiv.images {padding:2px;; margin:auto;}
-    .images div{display:inline-block; margin:1px;}
+
+    #header,#footer {background-color: #335; padding: 20px 20px 10px 20px; }
+
+    .images div{display:inline-block; margin:2px;}
     .images img{display:inline-block;}
-    #q {width:99%}
-    #lq,.title {font-size: 20pt}
+    .searchinput {width:99%}
+    .words td {vertical-align: top;}
+    .title {font-size: 20pt}
     .sizes {font-size: 10pt}
     .images {font-size: 12pt}
     a {text-decoration: none; color: #88ccff}
     a:hover {text-decoration: underline;}
-    .searchinput {width:100%}
-    .words td {vertical-align: top;}
   </style>
   <script>
     function setCookie(cname, cvalue, exdays) {
@@ -59,7 +62,7 @@
   </script>
 
   <div id="vue_image_array">
-    <div class="header">  
+    <div id="header">  
       <form v-on:submit.prevent="search_using_vue">
         <table width="100%"><tr>
             <td width="10%"><label for="new-todo" class="title"><a href="/">Search:</a></label></td>
@@ -80,7 +83,7 @@
       </form>
     </div>
     <div class="images" style="display:block-inline; margin:auto">
-      <div v-for="item in visible_items" v-bind:style="{ 'max-width': size+'px','max-height':(size*3/4+40)+'px' }">
+      <div v-for="item in visible_items" v-bind:style="{ 'max-width': (5+size)+'px','max-height':(10+size*3/4+40)+'px' }">
 	<a v-bind:href="'/img/' + item[0]" target="img">
           <img v-bind:src="'/thm/' + item[0] + '?size='+ size" v-bind:style="{ 'max-width': size+'px','max-height':(size*3/4)+'px' }">
 	</a><br>
