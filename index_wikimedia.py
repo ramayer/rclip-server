@@ -18,8 +18,6 @@
     There are currently 276,020 images marked as Quality images, which
     is roughly 0.36% of the available images (76,670,770).
 
-
-
     https://commons.wikimedia.org/wiki/Category:Featured_pictures_on_Wikimedia_Commons
     https://commons.wikimedia.org/wiki/Category:Quality_images
     https://commons.wikimedia.org/wiki/Category:Valued_images
@@ -46,6 +44,8 @@ import sqlite3
 import sys
 import torch
 import torch.nn
+import filelock
+lock = filelock.FileLock('/tmp/index_wikipedia.lock',timeout=10)
 
 # get db
 parser                    = argparse.ArgumentParser()
@@ -76,6 +76,12 @@ def get_already_processed_images(dbname):
         con.row_factory = sqlite3.Row
         return set([row['wikimedia_descr_url'] for row in con.execute(sql)])
         
+def check_pic(dbname,descr_url):
+    sql = '''select wikimedia_descr_url from images where wikimedia_descr_url == :descr_url'''
+    with sqlite3.connect(dbname) as con:
+        con.row_factory = sqlite3.Row
+        rows = list(con.execute(sql,{'descr_url':descr_url}))
+        return rows
 
 def save_image(dbname,descr_url:str, thm_url:str, clip_embedding:np.ndarray,size):
     clip_embedding_asbytes = clip_embedding.tobytes()
@@ -85,15 +91,16 @@ def save_image(dbname,descr_url:str, thm_url:str, clip_embedding:np.ndarray,size
       ON CONFLICT(filepath) DO UPDATE SET
         vector=:vector
     '''
-    with sqlite3.connect(dbname) as con:
-        con.execute(sql, {
-                   'filepath'            : descr_url,
-                   'wikimedia_descr_url' : descr_url,
-                   'wikimedia_thumb_url' : thm_url,
-                   'vector'              : clip_embedding_asbytes,
-                   'size'                : size
-                   })
-        con.commit()
+    with lock:
+        with sqlite3.connect(dbname) as con:
+            con.execute(sql, {
+                       'filepath'            : descr_url,
+                       'wikimedia_descr_url' : descr_url,
+                       'wikimedia_thumb_url' : thm_url,
+                       'vector'              : clip_embedding_asbytes,
+                       'size'                : size
+                       })
+            con.commit()
 
 def get_images_in_category(category_name):
     site = mwclient.Site('commons.wikimedia.org')
@@ -107,11 +114,7 @@ clip_model, clip_preprocess = clip.load('ViT-B/32','cpu')
 wikimedia_api_headers = {'User-agent': 
                          "OpenAI Clip Embedding Calculator/0.0 (https://github.com/ramayer/wikipedia_in_spark; ramayer+git@gmail.com) generic-library/0.0"}
 
-def process_image(img):
-    title        = img.base_title
-    name         = img.name
-    image_url    = img.imageinfo['url']
-    descr_url    = img.imageinfo['descriptionurl']
+def process_image(image_url,descr_url):
     if (image_url.endswith('.svg') or 
         image_url.endswith('.webm') or
         image_url.endswith('.stl') or
@@ -125,7 +128,7 @@ def process_image(img):
     if ext.lower() not in {'jpg', 'jpeg', 'JPG', 'PNG', 'JPEG', 'png', 'gif'}:
         print(f"not sure if it can handle image types like {image_url} yet")
         return(None,None,None,None)
-    print(datetime.datetime.now().isoformat(),image_url,descr_url)
+    print(' ',datetime.datetime.now().isoformat(),image_url,descr_url)
     sys.stdout.flush()
     url_suffix   = re.sub(r'.*/','',image_url)
     thm_url      = re.sub('/commons/','/commons/thumb/',image_url) + '/600px-' + url_suffix
@@ -147,7 +150,6 @@ def process_image(img):
     clip_embedding = normed.cpu().numpy()
     return(descr_url,thm_url,clip_embedding,len(content))
 
-
 create_table(args.db)
 
 already_done = set(get_already_processed_images('wikimedia_images.sqlite3'))
@@ -156,13 +158,44 @@ sane_cat = 'Valued_images_promoted_2021-08'
 big_cat = 'Featured_pictures_on_Wikimedia_Commons'
 bigger_cat = 'Valued_images'
 huge_cat = 'Quality_images'
-cat = huge_cat
+cat = 'Kung_fu'
+cat = None
 
-for img in get_images_in_category(cat):
-    descr_url    = img.imageinfo['descriptionurl']
+if cat:
+    for img in get_images_in_category(cat):
+        descr_url    = img.imageinfo['descriptionurl']
+        if descr_url in already_done:
+            print(f"already done: {descr_url}")
+        else:
+            title        = img.base_title
+            name         = img.name
+            image_url    = img.imageinfo['url']
+            descr_url    = img.imageinfo['descriptionurl']
+
+            descr_url,thm_url,clip_embedding,length = process_image(image_url,descr_url)
+            print(' ',descr_url,length)
+            if clip_embedding is not None:
+                save_image(args.db,descr_url,thm_url,clip_embedding,length)
+
+import json
+file = 'quality_metadata.ndjson'
+import random
+with open(file) as f:
+    lines = [json.loads(l) for l in f.readlines()]
+random.shuffle(lines)
+
+for idx,l in enumerate(lines):
+    image_url = l['url']
+    descr_url = l['descriptionurl']
     if descr_url in already_done:
         print(f"already done: {descr_url}")
-    else:
-        descr_url,thm_url,clip_embedding,length = process_image(img)
-        if clip_embedding is not None:
-            save_image(args.db,descr_url,thm_url,clip_embedding,length)
+        continue
+    if check_pic(args.db,descr_url):
+        print(f"recently done: {descr_url}")
+        continue
+
+    descr_url,thm_url,clip_embedding,length = process_image(image_url,descr_url)
+    print('indexing ',descr_url,length)
+    if clip_embedding is not None:
+        save_image(args.db,descr_url,thm_url,clip_embedding,length)
+
