@@ -226,18 +226,17 @@ class RClipServer:
           rgba = scalar_map.to_rgba(f)
           return "".join([f'{int(255*x):02x}' for x in rgba[0:3]])
 
-        html_result = "<div style='margin:auto; display:table'>"
+        html_result = "<div style='margin:auto; display:table;'>"
         clip_vec_as_json = json.dumps({"clip_embedding":desired_embedding.flatten().tolist()})
         html_result += "<h2>CLIP Embedding</h2>"
-        html_result += (f"<a href=search?q={urllib.parse.quote(clip_vec_as_json)}>"+
-                        "CLIP embedding</a>: "+
-                        "(red = above the mean for this dataset; blue = below the mean for this dataset)")
-        html_result += "<table><tr>"
+        html_result += (f"<a href=search?q={urllib.parse.quote(clip_vec_as_json)}>CLIP embedding</a>:<br>"+
+                        "* red = above the mean for this dataset<br> * blue = below the mean for this dataset")
+        html_result += "<table style='font-size:7pt'><tr>"
         normalized_desired_embedding = (desired_embedding - rclip_server.feature_minimums) / rclip_server.feature_ranges
         zipped_features = zip(desired_embedding.flatten(),normalized_desired_embedding.flatten())
         for idx,(df,nf) in enumerate(zipped_features):
             html_result += f"""<td style="background:#{get_color(nf)}">{float(df):0.2g}</td>"""
-            if idx % 16 == 15: html_result += "</tr><tr>" 
+            if idx % 8 == 7: html_result += "</tr><tr>" 
         html_result += "</table></div>"
         return html_result
 
@@ -366,6 +365,12 @@ async def img(img_id:int):
   hdrs = {'Cache-Control': 'public, max-age=172800'}
   return FileResponse(ii.filename, headers=hdrs)
 
+@app.get("/js/vue.global.prod.js")
+async def vue_js():
+  hdrs = {'Cache-Control': 'public, max-age=172800'}
+  return FileResponse('./assets/vue@3.2.11/vue.global.prod.js', headers=hdrs)
+
+
 import re
 @app.get("/thm/{img_id}")
 async def thm(img_id:int, size:Optional[int]=400):
@@ -408,25 +413,27 @@ def make_html(similarities,q,size,num,debug_features=None,debug=False,words=None
     tmpl = string.Template("""<html>
        <head>
            <!-- <script src="https://unpkg.com/vue@3.2.11/dist/vue.global.prod.js"> --> <!-- prod --> 
-           <script src="https://unpkg.com/vue@next"></script> <!-- dev -->
+           <!-- <script src="https://unpkg.com/vue@next"></script> --> <!-- dev -->
+           <script src="/js/vue.global.prod.js"></script> <!-- prod --> 
        </head>
        <title>$__title__</title>
        <style>
-          body {background-color: #444; width: 100%; margin: 0px; 
+          body {background-color: #334; width: 100%; margin: 0px; 
                 color:white;
                 font-family:-apple-system, BlinkMacSystemFont, "Segoe UI", "Ubuntu", "Helvetica Neue", sans-serif;
           }
+          th {text-align:left}
           form {margin:0px}
-          #header,#footer,.header {background-color: #444; padding: 20px 20px 10px 20px; }
+          #header,#footer,.header {background-color: #335; padding: 20px 20px 10px 20px; }
           zdiv.images {padding:2px;; margin:auto;}
           .images div{display:inline-block; margin:1px;}
           .images img{display:inline-block;}
           #q {width:99%}
           #lq,.title {font-size: 20pt}
-          .sizes,.images {font-size: 10pt}
-          a {text-decoration: none; color: #ccccff}
+          .sizes {font-size: 10pt}
+          .images {font-size: 12pt}
+          a {text-decoration: none; color: #88ccff}
           a:hover {text-decoration: underline;}
-          th {text-align:left}
           .searchinput {width:100%}
           .words td {vertical-align: top;}
        </style>
@@ -453,6 +460,8 @@ def make_html(similarities,q,size,num,debug_features=None,debug=False,words=None
                 vue_image_array.size=s;
                 vue_image_array.search_using_vue();
                 vue_image_array.limit = reasonable_num(vue_image_array.size);
+    console.log("setting size?")
+                setCookie('size',s,2);
             }
             function search_vue_rnd() {
                 let rndint = Math.floor(Math.random() * 10000); 
@@ -484,11 +493,11 @@ def make_html(similarities,q,size,num,debug_features=None,debug=False,words=None
  </div>
  <div class="images" style="display:block-inline; margin:auto">
   <div v-for="item in visible_items" v-bind:style="{ 'max-width': size+'px','max-height':(size*3/4+40)+'px' }">
-      <a v-bind:href="'/img/' + item[0]" target="blank">
+      <a v-bind:href="'/img/' + item[0]" target="img">
         <img v-bind:src="'/thm/' + item[0] + '?size='+ size" v-bind:style="{ 'max-width': size+'px','max-height':(size*3/4)+'px' }">
       </a><br>
-      {{ Math.round(item[1] * 100) }}% similarity;  
-      <a v-bind:href="make_mlt_url(item[0])" @click.prevent="more_like_this(item[0])">more like this</a>
+      {{ Math.round(item[1] * 100) }}%;   
+      <a v-bind:href="make_mlt_url(item[0])"  @click.exact.prevent="more_like_this(item[0])">more like this</a>
   </div>
  </div>
 <br>
@@ -506,7 +515,7 @@ def make_html(similarities,q,size,num,debug_features=None,debug=False,words=None
     };
 
     function get_size() {
-        return (get_cookie('szize') || 400);
+        return (get_cookie('size') || 400);
     };
 
     function wait_for_images_to_load(f){
@@ -528,7 +537,7 @@ def make_html(similarities,q,size,num,debug_features=None,debug=False,words=None
       data() {
         return {
           items: [],
-          size: 400,
+          size: get_size(),
           limit: 1,
           vue_q: urlParams.get('q')
         }
