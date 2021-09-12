@@ -1,0 +1,266 @@
+<html>
+  <head>
+    <!-- <script src="https://unpkg.com/vue@3.2.11/dist/vue.global.prod.js"> --> <!-- prod --> 
+      <!-- <script src="https://unpkg.com/vue@next"></script> --> <!-- dev -->
+      <script src="/js/vue.global.prod.js"></script> <!-- prod --> 
+  </head>
+  <title>$__title__</title>
+  <style>
+    body {background-color: #334; width: 100%; margin: 0px; 
+          color:white;
+          font-family:-apple-system, BlinkMacSystemFont, "Segoe UI", "Ubuntu", "Helvetica Neue", sans-serif;
+         }
+    th {text-align:left}
+    form {margin:0px}
+    #header,#footer,.header {background-color: #335; padding: 20px 20px 10px 20px; }
+    zdiv.images {padding:2px;; margin:auto;}
+    .images div{display:inline-block; margin:1px;}
+    .images img{display:inline-block;}
+    #q {width:99%}
+    #lq,.title {font-size: 20pt}
+    .sizes {font-size: 10pt}
+    .images {font-size: 12pt}
+    a {text-decoration: none; color: #88ccff}
+    a:hover {text-decoration: underline;}
+    .searchinput {width:100%}
+    .words td {vertical-align: top;}
+  </style>
+  <script>
+    function setCookie(cname, cvalue, exdays) {
+        const d = new Date();
+        d.setTime(d.getTime() + (exdays*24*60*60*1000));
+        let expires = "expires="+ d.toUTCString();
+        document.cookie = cname + "=" + cvalue + ";" + expires + ";path=/;SameSite=Lax";
+    }
+    function set_size(s) {
+        setCookie('size',s,2);
+        location.reload(); 
+    }
+    function reasonable_num(size) {
+        return (size <= 100 ? 60 :
+                size <= 200 ? 30 :
+                size <= 400 ? 18 :
+                size <= 600 ? 12 :
+                size <= 800 ? 6 :
+                6)
+    }
+    function set_vue_size(s) {
+        vue_image_array.size=s;
+        vue_image_array.search_using_vue();
+        vue_image_array.limit = reasonable_num(vue_image_array.size);
+	console.log("setting size?")
+        setCookie('size',s,2);
+    }
+    function search_vue_rnd() {
+        let rndint = Math.floor(Math.random() * 10000); 
+        vue_image_array.vue_q = JSON.stringify({random_seed:rndint});
+        vue_image_array.search_using_vue()
+    }
+  </script>
+
+  <div id="vue_image_array">
+    <div class="header">  
+      <form v-on:submit.prevent="search_using_vue">
+        <table width="100%"><tr>
+            <td width="10%"><label for="new-todo" class="title"><a href="/">Search:</a></label></td>
+            <td width="80%"><input class="searchinput" v-model="vue_q" id="vue_q" style="width:100%" placeholder="Search"/></td>
+            <td width="10%"><button>Go</button></td>
+          </tr><tr><td></td>
+            <td class="sizes">
+              <div style="float:right"><a href="javascript:search_vue_rnd()">random</a></div>
+              <div class="sizelinks" style="width:50%">
+		<a href="javascript:set_vue_size(100)">tiny</a>&nbsp;<!-- otherwise vue.js eats the space -->
+		<a href="javascript:set_vue_size(200)">small</a>&nbsp;<!-- otherwise vue.js eats the space -->
+		<a href="javascript:set_vue_size(400)">medium</a>&nbsp;<!-- otherwise vue.js eats the space -->
+		<a href="javascript:set_vue_size(600)">large</a>&nbsp;<!-- otherwise vue.js eats the space -->
+		<a href="javascript:set_vue_size(800)">huge</a>&nbsp;<!-- otherwise vue.js eats the space -->
+              </div>
+            </td>
+        </tr></table>
+      </form>
+    </div>
+    <div class="images" style="display:block-inline; margin:auto">
+      <div v-for="item in visible_items" v-bind:style="{ 'max-width': size+'px','max-height':(size*3/4+40)+'px' }">
+	<a v-bind:href="'/img/' + item[0]" target="img">
+          <img v-bind:src="'/thm/' + item[0] + '?size='+ size" v-bind:style="{ 'max-width': size+'px','max-height':(size*3/4)+'px' }">
+	</a><br>
+	{{ Math.round(item[1] * 100) }}%;   
+	<a v-bind:href="make_mlt_url(item[0])"  @click.exact.prevent="more_like_this(item[0])">more like this</a>
+      </div>
+    </div>
+    <br>
+    <a style="padding-left: 20px" href="javascript:increase_limit(vue_image_array.limit + reasonable_num(vue_image_array.size))">load more images</a>
+    <br>
+  </div>
+
+  <script>
+    let urlParams = new URLSearchParams(window.location.search);
+
+    function get_cookie(name) {
+	const value = `; ${document.cookie}`;
+	const parts = value.split(`; ${name}=`);
+	if (parts.length === 2) return parts.pop().split(';').shift();
+    };
+
+    function get_size() {
+        return (get_cookie('size') || 400);
+    };
+
+    function wait_for_images_to_load(f){
+        Promise.all(
+            Array.from(document.images)
+		.filter(img => !img.complete)
+		.map(img => new Promise(resolve => { img.onload = img.onerror = resolve; }))
+        ).then(() => { f() });
+    }
+
+    function increase_limit(upto){
+        vue_image_array.limit = vue_image_array.limit+=12;
+        if (vue_image_array.limit < upto) {
+            wait_for_images_to_load(()=>{increase_limit(upto)})
+        }
+    }
+
+    const vue_image_array = Vue.createApp({
+	data() {
+            return {
+		items: [],
+		size: get_size(),
+		limit: 1,
+		vue_q: urlParams.get('q')
+            }
+	},
+	methods: {
+            search_using_vue() {
+		console.log("search_using_vue: "+this.vue_q);
+		//this.items = [];
+		ajax_search(this.vue_q);
+		var title   = "rclip_server "+this.vue_q;
+		var uripath = "/search?q="+encodeURIComponent(this.vue_q);
+		window.history.pushState({
+                    new_q:this.vue_q,
+                    orig_q:urlParams.get('q')
+                },title, uripath);
+            },
+            more_like_this(img_id) {
+		this.vue_q = JSON.stringify({image_id:img_id});
+		this.vue_limit = reasonable_num(this.size);
+		this.search_using_vue()
+            },
+            get_size() {
+		return (get_cookie('size') || 400);
+            },
+            make_mlt_url(img_id) {
+		return this.make_search_url(JSON.stringify({image_id:img_id}));
+            },
+            make_search_url(q) {
+		return "/search?q="+encodeURIComponent(q);
+            }
+	},
+	computed: {
+            visible_items() {
+		return this.items.slice(0,this.limit)
+            }
+	}
+    }).mount('#vue_image_array')
+
+    window.addEventListener('popstate', (event) => {
+	var new_location = document.location;
+	console.log("popstate: location: " + new_location + ", state: " + JSON.stringify(event.state));
+	let urlParams = new URLSearchParams(new_location.search);
+	var new_q = urlParams.get('q');
+	vue_image_array.vue_q = new_q;
+	ajax_search(new_q);
+    });
+
+    function vue_search(q) {
+	vue_image_array.vue_q = q;
+	vue_image_array.search_using_vue();
+	window.scrollTo(0,0);
+    }
+
+    function ajax_search(ajax_q) {
+	document.title = "rclip-server "+ajax_q;
+	if ( ! (ajax_q)) { return; }
+	vue_image_array.limit = reasonable_num(vue_image_array.size);
+	fetch("search_api?num=1000&q="+encodeURIComponent(ajax_q))
+            .then(function (response) {
+		return response.json();
+            })
+            .then(function (myJson) {
+		vue_image_array.items = myJson
+		setTimeout(()=>{ wait_for_images_to_load(()=>{console.log('images finished loading');})},100)
+            })
+            .catch(function (error) {
+		console.log("Error: " + error);
+	    });
+	setTimeout(()=>{
+            fetch("similar_words?q="+encodeURIComponent(ajax_q))
+                .then(function (response) {
+                    return response.json();
+                })
+                .then(function (myJson) {
+                    vue_similar_words.similar_words = myJson['similar_words']
+                    vue_similar_words.similar_phrases = myJson['similar_phrases']
+                })
+                .catch(function (error) {
+                    console.log("Error: " + error);
+		});
+	},1000);
+	setTimeout(()=>{
+            fetch("visualize_clip_embedding?q="+encodeURIComponent(ajax_q))
+                .then(function (response) {
+                    return response.json();
+                })
+                .then(function (myJson) {
+                    visualization = myJson['clip_embedding']
+                    document.getElementById("visualize_clip_embedding").innerHTML=visualization;
+                })
+                .catch(function (error) {
+                    console.log("Error: " + error);
+		});
+	},1500);
+    }
+    ajax_search(urlParams.get('q'));
+  </script>
+
+  <hr>
+  <div id="vue_similar_words" class="words">
+    <div v-if="similar_words.length > 0">
+      <H2>Similar words and phrases</h2>
+      <table width="100%"><tr><td width="50%">
+	    <table style="margin:auto"><tr><th width="40%">word</th><th width="40%">similarity</th></tr>
+	      <tr v-for="item in similar_words">
+		<td><a @click="try_these_words(item[1])">{{item[1]}}</a></td>
+		<td>{{ Math.round(item[2] * 100) }}% similarity</td>
+	      </tr>
+	    </table>
+	  </td><td>
+	    <table style="margin:auto"><tr><th width="40%">phrase</th><th width="40%">similarity</th></tr>
+	      <tr v-for="item in similar_phrases">
+		<td><a @click="try_these_words(item[0])">{{item[0]}}</a></td>
+		<td>{{ Math.round(item[1] * 100) }}% similarity</td>
+	      </tr>
+	    </table>
+      </td></tr></table>
+    </div>
+  </div>
+  <script>
+    const vue_similar_words= Vue.createApp({
+	data() {
+            return {
+		similar_words: [], 
+		similar_phrases: [],
+            }
+	},
+	methods: {
+            try_these_words(q) {
+		vue_search(q)
+            }
+	}
+    }).mount('#vue_similar_words')
+  </script>
+
+  <div id="visualize_clip_embedding"></div>
+
+</html>
