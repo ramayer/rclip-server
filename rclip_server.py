@@ -388,6 +388,16 @@ async def vue_js():
 import re
 @app.get("/thm/{img_id}")
 async def thm(img_id:int, size:Optional[int]=400):
+  hdrs = {'Cache-Control': 'public, max-age=172800'}
+  if img_id == -1:
+     svg = f'''<svg version="1.1" width="{size}" height="{int(size*3/4)}" xmlns="http://www.w3.org/2000/svg">
+              <rect width="100%" height="100%" fill="black" />
+              <circle cx="150" cy="100" r="80" fill="#111111"/>
+              </svg>'''
+     buf = io.BytesIO(bytes(svg,'utf-8'))
+     buf.seek(0)
+     return StreamingResponse(buf,media_type="image/svg+xml", headers=hdrs)
+
   ii = rclip_server.image_info_from_id(img_id)
   if ii.thumbnail_url:
     thm_url = ii.thumbnail_url
@@ -399,7 +409,6 @@ async def thm(img_id:int, size:Optional[int]=400):
   if img.mode != 'RGB': img = img.convert('RGB')
   img.save(buf,format="jpeg")
   buf.seek(0)
-  hdrs = {'Cache-Control': 'public, max-age=172800'}
   return StreamingResponse(buf,media_type="image/jpeg", headers=hdrs)
 
 @app.get("/info/{img_id}")
