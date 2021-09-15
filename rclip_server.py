@@ -306,16 +306,7 @@ def home():
 
 @app.get("/search", response_class=HTMLResponse)
 async def search(q:str, num:Optional[int] = None, size:int=Cookie(400)):
-    #t0 = time.time()
-    #desired_features = rclip_server.guess_user_intent(q)                  ; t1 = time.time()
-    #if desired_features is None: return fastapi.responses.RedirectResponse('/')
-    #results          = rclip_server.find_similar_images(desired_features) ; t2 = time.time()
-    #similar_words    = rclip_server.best_words(desired_features)[0:50]    ; t3 = time.time()
-    #similar_phrases  = rclip_server.best_phrases(desired_features)[0:50]  ; t4 = time.time()
-    #print(t1-t0,t2-t1,t3-t2,t4-t3)
-    #results=q=size=num=desired_features=similar_words=similar_phrases=None
-    #return make_html(results,q,size,num,debug_features = desired_features,words=similar_words, phrases=similar_phrases)
-    hdrs = {'Cache-Control': 'public, max-age=0'}
+    hdrs = {'Cache-Control': 'public, max-age=3600'}
     return FileResponse('./assets/rclip_server.html', headers=hdrs)
 
 @app.get("/search_api")
