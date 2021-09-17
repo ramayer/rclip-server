@@ -25,6 +25,7 @@ import fastapi.responses
 import seaborn
 import matplotlib.colors
 import matplotlib.cm
+import pyparsing as pp
 
 from dataclasses import dataclass,field
 from typing import Optional
@@ -77,9 +78,41 @@ class RClipServer:
         stream = io.BytesIO(resp.content)
         img = pillow.Image.open(stream)
         return img
-        
+
+    # using pre-release pyparsing==3.0.0rc1 , so I don't need to change APIs later
+    def guess_user_intent(self,q) -> np.ndarray:
+        """Support complex queries like
+           skiing +summer -winter -(winter sports) +(summer sports) +{img:1234} +https://example.com/img.jpg
+        """
+        @functools.lru_cache
+        def get_parser():
+            sign  = pp.Opt(pp.one_of('+ -'),'+')
+            #word  = pp.Word(pp.unicode.printables,exclude_chars='([{}])}')
+            word  = pp.Word(pp.printables,exclude_chars='([{}])-+')
+            words = pp.OneOrMore(word)
+            enclosed        = pp.Forward()
+            nested_parens   = pp.nestedExpr('(', ')', content=enclosed)
+            nested_brackets = pp.nestedExpr('[', ']', content=enclosed)
+            nested_braces   = pp.nestedExpr('{', '}', content=enclosed)
+            enclosed << (words | nested_parens | nested_brackets | nested_braces)
+            expr = (sign + pp.original_text_for((nested_parens | nested_braces | words)))
+            return expr
+        parser = get_parser()
+        parsed = parser.search_string(q)
+        embeddings = []
+        print(parsed)
+        for operator,terms in parsed:
+            print(operator,terms)
+            e = self.guess_user_intent_element(terms)
+            if operator == '-':
+                embeddings.append(-e)
+            else:
+                embeddings.append(e)
+        result = functools.reduce(lambda x,y: x+y, embeddings)
+        return result
+
     @functools.lru_cache
-    def guess_user_intent(self,q) -> list:
+    def guess_user_intent_element(self,q) -> np.ndarray:
 
         if re.match(r'^https?://',q):
             img = self.download_image(q)
@@ -111,16 +144,6 @@ class RClipServer:
             rnd_features = make_rand_vector(512)
             return np.asarray([rnd_features])
 
-        if data.get('plus') or data.get('minus'):
-            p = data.get("plus")
-            m = data.get("minus")
-            if not p: p = []
-            if not m: m = []
-            if isinstance(p,str): p = [p]
-            if isinstance(m,str): m = [m]
-            plusses = [ 1 * self.guess_user_intent(q) for q in p]
-            minuses = [-1 * self.guess_user_intent(q) for q in m]
-            return functools.reduce(lambda x,y: x+y, plusses+minuses)
 
     def get_text_embedding(self,words):
         with torch.no_grad():
@@ -272,7 +295,10 @@ class RClipServer:
                                           self.guess_phrase_score(desired_embedding,words))
                                           for words in candidate_phrases
                                         ]
-        sorted_phrases = sorted(candidate_phrases_with_scores,key=lambda p:p[1],reverse=True)
+        sorted_phrases = sorted(candidate_phrases_with_scores,key=lambda p:p[1],reverse=True)[:100]
+
+        #sorted_phrases = [(s,self.calculate_phrase_score(desired_embedding,s)) for s,z in  sorted_phrases] # even 100 takes a minute
+
         #candidate_word_vecs           = [self.word_embeddings[idx] for idx,word,score in best_words]
         #first_word_vec                = candidate_word_vecs[0]
         #candidate_phrase_vecs         = [(v + first_word_vec) / np.linalg.norm(v + first_word_vec) for v in candidate_word_vecs]

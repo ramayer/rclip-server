@@ -68,6 +68,8 @@
 	</td></tr><tr><td>
 	    {{ Math.round(item[1] * 100) }}%;   
 	    <a v-bind:href="make_search_url(mlt_param(item[0]))"  @click.exact.prevent="search_using_vue(mlt_param(item[0]))"><nobr>more like this</nobr></a>
+	    <a href='#' @click.exact.prevent="add_to_search_term(item[0],'+')"><nobr> + </nobr></a>
+	    <a href='#' @click.exact.prevent="add_to_search_term(item[0],'-')"><nobr> - </nobr></a>
 	</td></tr></table>
         </div>
       </div>
@@ -257,6 +259,9 @@
             },
             make_search_url(q) {
 		return "/search?q="+encodeURIComponent(q);
+            },
+            add_to_search_term(imgid,sign) {
+                this.vue_q = this.vue_q + ' '+sign+'{"image_id":'+imgid+'}';
             },
 	},
 	computed: {
