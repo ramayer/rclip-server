@@ -13,6 +13,7 @@ import pathlib
 import PIL as pillow
 import PIL.Image
 import random
+import re
 import requests.utils
 import sqlite3
 import string
@@ -66,6 +67,9 @@ class RClipServer:
         self.feature_maximums:np.ndarray = functools.reduce(lambda x,y: np.maximum(x,y), self.image_embeddings)
         self.feature_ranges:np.ndarray   = self.feature_maximums - self.feature_minimums
         self.imgid_to_idx = dict([(ii.image_id,ii.image_index) for ii in self.image_info])
+
+        self.parser = self.get_parser()
+
         print(f"found {len(self.image_info)} images")
 
     def download_image(self,url) -> PIL.Image.Image:
@@ -79,41 +83,45 @@ class RClipServer:
         img = pillow.Image.open(stream)
         return img
 
-    # using pre-release pyparsing==3.0.0rc1 , so I don't need to change APIs later
+    def get_parser(self):
+        # using pre-release pyparsing==3.0.0rc1 , so I don't need to change APIs later
+        sign = pp.Opt(
+                    pp.Opt(pp.one_of('+ -'),'+') +
+                    pp.Opt(pp.pyparsing_common.number.copy(),'1')
+              ,['+','1'])
+        #word  = pp.Word(pp.alphanums,exclude_chars='([{}])') # fails on hyphenated words
+        #word  = pp.Word(pp.alphanums,pp.printables,exclude_chars='([{}])') # fails on unicode
+        word  = pp.Word(pp.unicode.alphanums,pp.unicode.printables,exclude_chars='([{}])') # slow
+        words = pp.OneOrMore(word)
+        enclosed        = pp.Forward()
+        nested_parens   = pp.nestedExpr('(', ')', content=enclosed)
+        nested_brackets = pp.nestedExpr('[', ']', content=enclosed)
+        nested_braces   = pp.nestedExpr('{', '}', content=enclosed)
+        enclosed << pp.OneOrMore((pp.Regex(r"[^{(\[\])}]+") | nested_parens | nested_brackets | nested_braces))
+        expr = (sign + 
+                pp.original_text_for((nested_parens | nested_braces | words))
+                )
+        return expr
+
     def guess_user_intent(self,q) -> np.ndarray:
         """Support complex queries like
            skiing +summer -winter -(winter sports) +(summer sports) +{img:1234} +https://example.com/img.jpg
         """
-        @functools.lru_cache
-        def get_parser():
-            sign  = pp.Opt(pp.one_of('+ -'),'+')
-            #word  = pp.Word(pp.unicode.printables,exclude_chars='([{}])}')
-            word  = pp.Word(pp.printables,exclude_chars='([{}])-+')
-            words = pp.OneOrMore(word)
-            enclosed        = pp.Forward()
-            nested_parens   = pp.nestedExpr('(', ')', content=enclosed)
-            nested_brackets = pp.nestedExpr('[', ']', content=enclosed)
-            nested_braces   = pp.nestedExpr('{', '}', content=enclosed)
-            enclosed << (words | nested_parens | nested_brackets | nested_braces)
-            expr = (sign + pp.original_text_for((nested_parens | nested_braces | words)))
-            return expr
-        parser = get_parser()
+        parser = self.parser
         parsed = parser.search_string(q)
         embeddings = []
         print(parsed)
-        for operator,terms in parsed:
-            print(operator,terms)
-            e = self.guess_user_intent_element(terms)
-            if operator == '-':
-                embeddings.append(-e)
-            else:
-                embeddings.append(e)
+        for operator,magnitude,terms in parsed:
+            if len(terms)>2 and terms[0] == '(' and terms[-1] == ')': terms=terms[1:-1]
+            print(operator,magnitude,terms)
+            e = self.guess_user_intent_element(terms) * float(magnitude) * float(operator+'1')
+            embeddings.append(e)
         result = functools.reduce(lambda x,y: x+y, embeddings)
         return result
 
     @functools.lru_cache
     def guess_user_intent_element(self,q) -> np.ndarray:
-
+        print(f"trying {q}")
         if re.match(r'^https?://',q):
             img = self.download_image(q)
             return self.get_image_embedding([img])
@@ -381,7 +389,7 @@ async def conceptmap(q:str, m:str=None, p:str=None,num:int = 36, size:int=400, d
 @app.get("/censor", response_class=HTMLResponse)
 async def censor_endpoint(img_id:int):
     rclip_server.censor(img_id)
-    return(f"<html>Ok, {path} is censored</html>")
+    return(f"<html>Ok, {img_id} is now censored</html>")
 
 @app.get("/reload", response_class=HTMLResponse)
 async def reload():
@@ -401,8 +409,6 @@ async def vue_js():
   hdrs = {'Cache-Control': 'public, max-age=172800'}
   return FileResponse('./assets/vue@3.2.11/vue.global.prod.js', headers=hdrs)
 
-
-import re
 @app.get("/thm/{img_id}")
 async def thm(img_id:int, size:Optional[int]=400):
   hdrs = {'Cache-Control': 'public, max-age=172800'}
