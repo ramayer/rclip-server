@@ -7,7 +7,10 @@
   <title>Rclip Server</title>
   <style>
     :root {
-        --bkg: #104;
+        --bkg: #444;
+        --headbkg: #555;
+        --subtletext: #888;
+        --brighttext: #ccc;
     }
     body {
 	background-color: var(--bkg);
@@ -20,19 +23,22 @@
     th {text-align:left}
     td {text-overflow:ellipsis}
     form {margin:0px}
-    #header,#footer {background-color: #150055; padding: 20px 20px 10px 20px; }
-    .images {font-size: 12pt; display:flex; max-width: 100%; flex-wrap:wrap}
-    .image td {color: #206}
-    .image a {color: #206}
-    .image:hover a {color: #88f} 
-   .image:hover td {color: #88f}
-    .image_container {zbackground-color: #000;}
-    .images img{display:block; margin:auto}
+    #header,#footer {background-color: var(--headbkg); padding: 20px 20px 10px 20px; font-size: 10pt}
+
+    .images {font-size: 12pt; display:flex; flex-wrap:wrap;}
+
+    .image_container { position: relative; height:100%; }
+    .image_overlay   { position: absolute;  bottom: 2px;  left: 2px; padding:4px; display:none }
+
+    .image_container:hover a {color: var(--brighttext)} 
+    .image_container:hover td {color: var(--brighttext)}
+    .image_container:hover .image_overlay {background-color: var(--bkg); display:block}
+
     .searchinput {width:99%}
     .words td {vertical-align: top;}
     .title {font-size: 20pt}
     .sizes {font-size: 10pt}
-    a {text-decoration: none; color: #88ccff; align-self: flex-end;}
+    a {text-decoration: none; color: var(--brighttext) align-self: flex-end;}
     a:hover {text-decoration: underline;}
   </style>
 
@@ -59,19 +65,20 @@
         </tr></table>
       </form>
     </div>
+
     <div class="images" style="display:block-inline; margin:auto">
-      <div class="image" v-for="item in visible_items" v-bind:style="{ 'max-width': (5+size)+'px','max-height':(10+size*2/3+40)+'px'}">
-      <table><tr><td v-bind:style="{'height':(size*2/3)+'px','horizontal-align':'center'}" class="image_container"><div>
+      <div v-for="item in visible_items"  class="image_container" v-bind:style="{'height':(size*2/3)+'px','max-width': (5+size)+'px'}">
 	<a v-bind:href="'/img/' + item[0]" target="img">
           <img v-bind:src="'/thm/' + item[0] + '?size='+ size" v-bind:style="{ 'max-width': size+'px','max-height':(size*2/3)+'px' }">
 	</a>
-	</td></tr><tr><td>
+	<div class="image_overlay">
 	    {{ Math.round(item[1] * 100) }}%;   
 	    <a v-bind:href="make_search_url(mlt_param(item[0]))"  @click.exact.prevent="search_using_vue(mlt_param(item[0]))"><nobr>more like this</nobr></a>
 	    <a href='#' @click.exact.prevent="add_to_search_term(item[0],'+')"><nobr> + </nobr></a>
 	    <a href='#' @click.exact.prevent="add_to_search_term(item[0],'-')"><nobr> - </nobr></a>
-	</td></tr></table>
-        </div>
+	</div>
+       </div>
+
       </div>
     </div>
     <br>
@@ -79,11 +86,7 @@
     <br>
   </div>
 
-
-
   <hr>
-
-
 
   <div id="vue_similar_words" class="words">
     <div v-if="similar_words.length > 0">
@@ -105,9 +108,39 @@
       </td></tr></table>
     </div>
   </div>
+
   <div id="visualize_clip_embedding"></div>
 
+  <div class="footer" id="footer">
+      <div id="vue_copyright_footer">
+          {{ copyright_message }}
+      </div>
+  </div>
+
   <script>
+    const VueCopyrightFooter = {
+        data() {
+            return {
+                copyright_message : 'hi'
+            }
+        }
+    }
+    const vue_copyright_footer = Vue.createApp(VueCopyrightFooter).mount('#vue_copyright_footer')
+    setTimeout(()=>{
+        fetch("copyright_message")
+		.then(function (response) {
+		    return response.json();
+		})
+		.then(function (data) {
+		    vue_copyright_footer.copyright_message = data['copyright_message'];
+		})
+		.catch(function (error) {
+		    console.log("Error: " + error);
+		})
+		},10);
+
+
+
 
     /* url parameter and cookie functions */
 

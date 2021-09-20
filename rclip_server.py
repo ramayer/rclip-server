@@ -49,9 +49,9 @@ class ImageInfo:
 
 class RClipServer:
 
-    def __init__(self,rclip_db, model_name='ViT-B/32', device='cpu'):
+    def __init__(self,rclip_db:str, model_name='ViT-B/32', device='cpu'):
         print(f"using {rclip_db}")
-        self._db        = rclip_db
+        self.rclip_db: str  = rclip_db
         self.device     = device
         self.model_name = model_name
 
@@ -94,12 +94,13 @@ class RClipServer:
         word  = pp.Word(pp.unicode.alphanums,pp.unicode.printables,exclude_chars='([{}])') # slow
         words = pp.OneOrMore(word)
         enclosed        = pp.Forward()
+        quoted_string   = pp.QuotedString('"')
         nested_parens   = pp.nestedExpr('(', ')', content=enclosed)
         nested_brackets = pp.nestedExpr('[', ']', content=enclosed)
         nested_braces   = pp.nestedExpr('{', '}', content=enclosed)
-        enclosed << pp.OneOrMore((pp.Regex(r"[^{(\[\])}]+") | nested_parens | nested_brackets | nested_braces))
+        enclosed << pp.OneOrMore((pp.Regex(r"[^{(\[\])}]+") | nested_parens | nested_brackets | nested_braces | quoted_string))
         expr = (sign + 
-                pp.original_text_for((nested_parens | nested_braces | words))
+                pp.original_text_for((quoted_string | nested_parens | nested_braces | words))
                 )
         return expr
 
@@ -211,26 +212,34 @@ class RClipServer:
             con.row_factory = sqlite3.Row
             rclip_sql =  f'UPDATE images SET deleted=True where id = ?'
             return con.execute(rclip_sql,(img_id,))
-        self.__init__(self._db)
+        self.__init__(self.rclip_db)
 
     def dedup_sqlite(self):
-        find_dups = '''with a as (select count(*),min(id) as min_id from images where deleted is null group by vector having count(*) > 1) select count(id) from images where vector in (select vector from images where id in (select min_id from a));'''
-        dedup_sql = '''with a as (select count(*),min(id) as min_id from images where deleted is null group by vector having count(*) > 1) update images set deleted=true where vector in (select vector from images where id in (select min_id from a)) and id not in (select min_id from a)'''
+        """ Set the deleted flag for any image that has the exact same embedding as another image """
+        dedup_sql = '''
+            WITH a AS (
+               SELECT count(*),min(id) AS min_id FROM images WHERE deleted IS NULL GROUP BY vector HAVING count(*) > 1
+           ) UPDATE images SET deleted=true 
+              WHERE vector IN (SELECT vector FROM images WHERE id IN (SELECT min_id FROM a)) 
+                AND id NOT IN (SELECT min_id FROM a)
+        '''
 
-    def reasonable_num(self,size:int):
-        return (size < 100 and 360 
-                or size < 200 and 180
-                or size < 400 and 72
-                or size < 600 and 24
-                or size < 800 and 12
-                or 6)
-
-    # Show candidate words for picture
-    
     def find_best_matches(self,desired_embedding: np.ndarray, all_embeddings) -> list[tuple[float, int]]:
+        """ Compute dot produts of all candidate resutls with the desired result, and return a sorted list """
         similarities = (desired_embedding @ all_embeddings.T).squeeze(0).tolist()
         sorted_similarities = sorted(enumerate(similarities), key=lambda x: x[1], reverse=True)
         return sorted_similarities
+
+    def copyright_message(self):
+        if re.search(r'wiki',self.rclip_db):
+            return '''
+            Images in this demo are from Wikimedia Commons, available
+            under various different licenses specified on their
+            description page.  Click on an image to see its specific
+            license.
+            '''
+        else:
+            return self.rclip_db
 
     def load_word_embeddings(self,word_embedding_db):
         word_features: list[np.ndarray] = []
@@ -308,6 +317,7 @@ class RClipServer:
         #sorted_phrases = [(s,self.calculate_phrase_score(desired_embedding,s)) for s,z in  sorted_phrases] # even 100 takes a minute
 
         #candidate_word_vecs           = [self.word_embeddings[idx] for idx,word,score in best_words]
+
         #first_word_vec                = candidate_word_vecs[0]
         #candidate_phrase_vecs         = [(v + first_word_vec) / np.linalg.norm(v + first_word_vec) for v in candidate_word_vecs]
         #candidate_phrase_scores       = [(desired_embedding @ cv.T).squeeze(0).tolist() for cv in candidate_phrase_vecs]
@@ -414,13 +424,12 @@ async def thm(img_id:int, size:Optional[int]=400):
   hdrs = {'Cache-Control': 'public, max-age=172800'}
   if img_id == -1:
      svg = f'''<svg version="1.1" width="{size}" height="{int(size*3/4)}" xmlns="http://www.w3.org/2000/svg">
-              <rect width="100%" height="100%" fill="black" />
-              <circle cx="150" cy="100" r="80" fill="#111111"/>
+              <rect width="100%" height="100%" fill="#333" />
+              <circle cx="150" cy="100" r="80" fill="#555"/>
               </svg>'''
      buf = io.BytesIO(bytes(svg,'utf-8'))
      buf.seek(0)
      return StreamingResponse(buf,media_type="image/svg+xml", headers=hdrs)
-
   ii = rclip_server.image_info_from_id(img_id)
   if ii.thumbnail_url:
     thm_url = ii.thumbnail_url
@@ -441,6 +450,11 @@ async def info(img_id:int):
     clip_embedding = rclip_server.get_image_embedding([img])
     info = {'path':img_path,'embedding':clip_embedding.tolist()}
     return fastapi.responses.JSONResponse(content=info)
+
+@app.get("/copyright_message")
+async def copyright_message():
+    msg = {'copyright_message':rclip_server.copyright_message()}
+    return msg
 
 ###############################################################################
 # Minimal HTML template
@@ -495,12 +509,7 @@ if __name__ == "__main__":
           >>> similarities = (txt_embedding @ img_embeddings.T).squeeze(0).tolist()
   """)
 
-
-
-# Debug the rclip index using commands like:
-#
-#    ~/proj/rclip/bin/rclip.sh -n dog -f | feh -f - t -g 1000x1000
-#
 # If using nginx, add the following config to allow the large GET reqests with clip embedding paramaters:
 #
 #   large_client_header_buffers 16 16k;
+#
