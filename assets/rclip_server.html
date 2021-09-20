@@ -11,6 +11,7 @@
         --headbkg: #555;
         --subtletext: #888;
         --brighttext: #ccc;
+        --linkcolor: #ccf;
     }
     body {
 	background-color: var(--bkg);
@@ -24,21 +25,17 @@
     td {text-overflow:ellipsis}
     form {margin:0px}
     #header,#footer {background-color: var(--headbkg); padding: 20px 20px 10px 20px; font-size: 10pt}
-
     .images {font-size: 12pt; display:flex; flex-wrap:wrap;}
-
     .image_container { position: relative; height:100%; }
     .image_overlay   { position: absolute;  bottom: 2px;  left: 2px; padding:4px; display:none }
-
-    .image_container:hover a {color: var(--brighttext)} 
     .image_container:hover td {color: var(--brighttext)}
     .image_container:hover .image_overlay {background-color: var(--bkg); display:block}
-
+    .no_results_msg {background-color: var(--headbkg); margin:20px}
     .searchinput {width:99%}
     .words td {vertical-align: top;}
     .title {font-size: 20pt}
     .sizes {font-size: 10pt}
-    a {text-decoration: none; color: var(--brighttext) align-self: flex-end;}
+    a {text-decoration: none; color: var(--linkcolor); align-self: flex-end;}
     a:hover {text-decoration: underline;}
   </style>
 
@@ -52,7 +49,7 @@
           </tr><tr><td></td>
             <td class="sizes">
               <div style="float:right">
-               <a v-bind:href="make_search_url(rnd_param())"  @click.exact.prevent="search_using_vue(rnd_param())">random</a>
+		<a v-bind:href="make_search_url(rnd_param())"  @click.exact.prevent="search_using_vue(rnd_param())">random</a>
               </div>
               <div class="sizelinks" style="width:50%">
 		<a href="javascript:set_vue_size(100)">tiny</a>&nbsp;<!-- otherwise vue.js eats the space -->
@@ -72,13 +69,24 @@
           <img v-bind:src="'/thm/' + item[0] + '?size='+ size" v-bind:style="{ 'max-width': size+'px','max-height':(size*2/3)+'px' }">
 	</a>
 	<div class="image_overlay">
-	    {{ Math.round(item[1] * 100) }}%;   
-	    <a v-bind:href="make_search_url(mlt_param(item[0]))"  @click.exact.prevent="search_using_vue(mlt_param(item[0]))"><nobr>more like this</nobr></a>
-	    <a href='#' @click.exact.prevent="add_to_search_term(item[0],'+')"><nobr> + </nobr></a>
-	    <a href='#' @click.exact.prevent="add_to_search_term(item[0],'-')"><nobr> - </nobr></a>
+	  {{ Math.round(item[1] * 100) }}%;   
+	  <a v-bind:href="make_search_url(mlt_param(item[0]))"  @click.exact.prevent="search_using_vue(mlt_param(item[0]))"><nobr>more like this</nobr></a>
+	  <a href='#' @click.exact.prevent="add_to_search_term(item[0],'+')"><nobr> + </nobr></a>
+	  <a href='#' @click.exact.prevent="add_to_search_term(item[0],'-')"><nobr> - </nobr></a>
 	</div>
-       </div>
-
+      </div>
+      <div id="no_results_msg" class = "no_results_msg" v-bind:style="{'display':no_results_style}">
+          <h3>Explore CLIP embeddings of Wikimedia images</h3>
+          Some interesting searches to try:
+          <ul>
+          <li><a href="/search?q=zebra -stripes %2Bspots">zebra -stripes +spots</a> - Animals that look kinda like zebras but with spots instead of stripes.
+          <li><a href="/search?q=zebra -mammal %2Bfish">zebra -mammal +fish</a> - Animals that are like zebras but fish instead of mammals.
+          <li><a href="/search?q=zebra -animal %2Bcar">zebra -animal +car</a> - Animals that are like zebras but cars instead of animals.
+          <li><a href="/search?q=zebra%20-%22black%20and%20white%22">zebra -"black and white"</a> - Baby zebras (brown & white) and a Greater Kudu (abrown & white striped 4-legged animal).  Of course you could also find the same baby zebra searching for <a href="/search?q=zebra%20-big %2Bsmall">zebra -big +small</a> or even more simply <a href="/search?q=zebra%20-big %2Bsmall">baby zebra</a>.
+          <li><a href="/search?q=furry black and white striped animal">furry black and white striped animal</a> - returns zebras and other furry black and white animals.
+          <li><a href="/search?q=striped horse-like animal">striped horse-like animal</a> - more zebras (and horses with stripes)
+          <li><a href="/search?q=zebra habitat -zebra">zebra habitat -zebra</a> - places that look like zebras might live there.
+          </ul>
       </div>
     </div>
     <br>
@@ -300,6 +308,9 @@
 	computed: {
             visible_items() {
 		return this.items.slice(0,this.limit)
+            },
+            no_results_style() {
+		return((this.items.length == 0) ? "block" : "none");
             }
 	}
     }).mount('#vue_image_array')

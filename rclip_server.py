@@ -117,6 +117,8 @@ class RClipServer:
             print(operator,magnitude,terms)
             e = self.guess_user_intent_element(terms) * float(magnitude) * float(operator+'1')
             embeddings.append(e)
+        if len(embeddings) == 0:
+            return None
         result = functools.reduce(lambda x,y: x+y, embeddings)
         return result
 
@@ -356,6 +358,7 @@ async def search(q:str, num:Optional[int] = None, size:int=Cookie(400)):
 @app.get("/search_api")
 async def search_api(q:str, num:Optional[int] = None):
     desired_features = rclip_server.guess_user_intent(q)
+    if desired_features is None: return []
     results = rclip_server.find_similar_images(desired_features)
     top_results = results[0:num or 12]
     r = [(rclip_server.image_info[idx].image_id,score) for idx,score in top_results]
@@ -364,6 +367,7 @@ async def search_api(q:str, num:Optional[int] = None):
 @app.get("/similar_words")
 async def similar_words(q:str, num:Optional[int] = None):
     desired_features = rclip_server.guess_user_intent(q)
+    if desired_features is None: return []
     similar_words    = rclip_server.best_words(desired_features)[0:50]
     similar_phrases  = rclip_server.best_phrases(desired_features)[0:50]
     result = {'similar_words':similar_words,'similar_phrases':similar_phrases}
@@ -372,6 +376,7 @@ async def similar_words(q:str, num:Optional[int] = None):
 @app.get("/visualize_clip_embedding")
 async def vixualize_clip_embedding_api(q:str, num:Optional[int] = None):
     desired_features = rclip_server.guess_user_intent(q)
+    if desired_features is None: return ''
     html_frag = rclip_server.visualize_clip_embedding(desired_features)
     return({'clip_embedding':html_frag})
 
