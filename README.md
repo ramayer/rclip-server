@@ -14,7 +14,7 @@ Some other interesing searches:
 * [zebra -stripes +spots](http://image-search.0ape.com/search?q=zebra%20-stripes%20%2Bspots) - Animals that look kinda like zebras but with spots instead of stripes.
 * [zebra -mammal +fish](http://image-search.0ape.com/search?q=zebra%20-mammal%20%2Bfish) - Animals that are like zebras but fish instead of mammals.
 * [zebra -animal +car](http://image-search.0ape.com/search?q=zebra%20-animal%20%2Bcar) - Animals that are like zebras but cars instead of animals.
-* [zebra -"black and white"](http://image-search.0ape.com/search?q=zebra%20-%22black%20and%20white%22) - Baby zebras (brown & white) and a Greater Kudu (a brown & white striped 4-legged animal). Of course you could also find the same baby * [zebra searching for zebra -big +small or even more simply baby zebra.
+* [zebra -"black and white"](http://image-search.0ape.com/search?q=zebra%20-%22black%20and%20white%22) - Baby zebras (brown & white) and a Greater Kudu (a brown & white striped 4-legged animal). Of course you could also find the same baby zebra searching for [zebra -big +small](http://image-search.0ape.com/search?q=zebra%20-big%20%2Bsmall) or even more simply, just [baby zebra](http://image-search.0ape.com/search?q=baby%20zebra).
 * [furry black and white striped animal](http://image-search.0ape.com/search?q=furry%20black%20and%20white%20striped%20animal) - returns zebras and other furry black and white animals.
 * [striped horse-like animal](http://image-search.0ape.com/search?q=striped%20horse-like%20animal) - more zebras (and horses with stripes)
 * [zebra habitat -zebra](http://image-search.0ape.com/search?q=zebra%20habitat%20-zebra) - places that look like zebras might live there.
