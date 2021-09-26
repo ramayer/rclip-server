@@ -117,6 +117,7 @@ class RClipServer:
         if len(embeddings) == 0:
             return None
         result = functools.reduce(lambda x,y: x+y, embeddings)
+        result /= np.linalg.norm(result)
         return result
 
     @functools.lru_cache
@@ -252,11 +253,14 @@ class RClipServer:
 
     def copyright_message(self):
         if re.search(r'wiki',self.rclip_db):
-            return '''
-            Images in this demo are from Wikimedia Commons, available
-            under various different licenses specified on their
-            description page.  Click on an image to see its specific
-            license.
+            return '''             
+            <small>Images in this demo are from Wikimedia Commons,
+            available under various different licenses specified on
+            their description page.  Click on an image to see its
+            specific license.<br>
+            Source code for this project is 
+            <a href="https://github.com/ramayer/rclip-server">available
+            on github</a>.</small>
             '''
         else:
             return self.rclip_db

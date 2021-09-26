@@ -11,7 +11,7 @@
         --headbkg: #555;
         --subtletext: #888;
         --brighttext: #ccc;
-        --linkcolor: #ccf;
+        --linkcolor: #88f;
     }
     body {
 	background-color: var(--bkg);
@@ -24,19 +24,22 @@
     th {text-align:left}
     td {text-overflow:ellipsis}
     form {margin:0px}
-    #header,#footer {background-color: var(--headbkg); padding: 20px 20px 10px 20px; font-size: 10pt}
+    #header {background-color: var(--headbkg); padding: 20px 20px 10px 20px; font-size: 10pt}
+    #footer {background-color: var(--headbkg); padding: 10px 20px 10px 20px; font-size: 10pt}
+    #more   {text-align: right; padding-right: 40px;}
+    h2 {text-align: center; background-color: var(--headbkg); padding: 5px}
     .images {font-size: 12pt; display:flex; flex-wrap:wrap;}
     .image_container { position: relative; height:100%; }
     .image_overlay   { position: absolute;  bottom: 2px;  left: 2px; padding:4px; display:none }
     .image_container:hover td {color: var(--brighttext)}
     .image_container:hover .image_overlay {background-color: var(--bkg); display:block}
-    .no_results_msg {background-color: var(--headbkg); margin:20px}
+    .no_results_msg {margin:20px}
     .searchinput {width:99%}
     .words td {vertical-align: top;}
     .title {font-size: 20pt}
     .sizes {font-size: 10pt}
     a {text-decoration: none; color: var(--linkcolor); align-self: flex-end;}
-    a:hover {text-decoration: underline;}
+    a:hover {text-decoration: underline; color: #ccf}
   </style>
 
   <div id="vue_image_array">
@@ -77,7 +80,9 @@
       </div>
       <div id="no_results_msg" class = "no_results_msg" v-bind:style="{'display':no_results_style}">
           <h3>Explore CLIP embeddings of Wikimedia images</h3>
-          Some interesting searches to try:
+
+
+          This system lets you do simple math on CLIP embeddings with prefixes like "-" to subtract CLIP vectors and "+" to add them.
           <ul>
           <li><a href="/search?q=zebra -stripes %2Bspots">zebra -stripes +spots</a> - Animals that look kinda like zebras but with spots instead of stripes.
           <li><a href="/search?q=zebra -mammal %2Bfish">zebra -mammal +fish</a> - Animals that are like zebras but fish instead of mammals.
@@ -87,14 +92,16 @@
           <li><a href="/search?q=striped horse-like animal">striped horse-like animal</a> - more zebras (and horses with stripes)
           <li><a href="/search?q=zebra habitat -zebra">zebra habitat -zebra</a> - places that look like zebras might live there.
           </ul>
+
+          <b>
+
       </div>
     </div>
-    <br>
-    <a style="padding-left: 20px" href="javascript:increase_limit(vue_image_array.limit + reasonable_num(vue_image_array.size))">load more images</a>
+    <div id="more" v-if="visible_items.length > 0">
+      <a style="padding-left: 20px" href="javascript:increase_limit(vue_image_array.limit + reasonable_num(vue_image_array.size))">load more images</a>
+    </div>
     <br>
   </div>
-
-  <hr>
 
   <div id="vue_similar_words" class="words">
     <div v-if="similar_words.length > 0">
@@ -120,9 +127,10 @@
   <div id="visualize_clip_embedding"></div>
 
   <div class="footer" id="footer">
-      <div id="vue_copyright_footer">
-          {{ copyright_message }}
+    <div id="vue_copyright_footer">
+      <div v-html="copyright_message">
       </div>
+    </div>
   </div>
 
   <script>
