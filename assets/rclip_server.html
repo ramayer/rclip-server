@@ -211,7 +211,7 @@
 
     function ajax_search_without_history(q) {
 	if ( ! (q)) { return; }
-        //vue_image_array.items = Array(32).fill([-1,0])
+  	vue_image_array.items = Array(32).fill([-1,0])
         vue_image_array.vue_q = q;
 	document.title = "rclip-server "+q;
 	vue_image_array.limit = reasonable_num(vue_image_array.size);

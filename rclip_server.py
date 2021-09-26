@@ -404,8 +404,8 @@ async def thm(img_id:int, size:Optional[int]=400):
   hdrs = {'Cache-Control': 'public, max-age=172800'}
   if img_id == -1:
      svg = f'''<svg version="1.1" width="{size}" height="{int(size*3/4)}" xmlns="http://www.w3.org/2000/svg">
-              <rect width="100%" height="100%" fill="#333" />
-              <circle cx="150" cy="100" r="80" fill="#555"/>
+              <!--<rect width="100%" height="100%" fill="#333" /> -->
+              <circle cx="50%" cy="50%" r="25%" fill="#222"/>
               </svg>'''
      buf = io.BytesIO(bytes(svg,'utf-8'))
      buf.seek(0)
