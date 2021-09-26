@@ -20,6 +20,10 @@ Some other interesing searches:
 * [zebra habitat -zebra](http://image-search.0ape.com/search?q=zebra%20habitat%20-zebra) - places that look like zebras might live there.
 
 
+
+
+It can also do a search based on the difference between the CLIP embeddings of two images directly.  For example, CLIP considers difference between [this image of a spider on a purple flower](http://image-search.0ape.com/search?q=%7B%22image_id%22%3A28754%7D) minus [this image of the same kind of spider on a white flower](http://image-search.0ape.com/search?q=%7B%22image_id%22%3A174054%7D) to be [this set of pictures which is mostly purple flowers without the spider](http://image-search.0ape.com/search?q=%7B%22image_id%22%3A28754%7D%20-%7B%22image_id%22%3A174054%7D).
+
 --
 
 Thumbnail images in the screenshot are from Wikimedia Commons, and are released under various open source licenses. You can [perform the same search](http://image-search.0ape.com/search?q=zebra%20habitat%20-zebra) and click on an image to see the license for each respective image.
