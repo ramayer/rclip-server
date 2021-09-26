@@ -1,2 +1,25 @@
-# rclip-server
-A simple web-server/api over a rclip-style clip embedding database.
+# Explore CLIP Embeddings in a rclip database
+
+A simple FastAPI web service + Vue.js based UI over a [rclip](https://github.com/yurijmikhalevich/rclip)-style clip embedding database.
+
+A [live demo of this software based on an index of wikimeda images can be seen here](http://image-search.0ape.com/).
+
+It enables a search syntax like [zebra -stripes +spots](http://image-search.0ape.com/search?q=zebra%20-stripes%20%2Bspots) to do simple math on CLIP embeddings as shown in this screenshot.
+
+![Example of 'zebra -stripes +spots'](doc/zebra_minus_stripes_plus_spots.png "Example of 'zebra -stripes +spots'")
+
+
+Some other interesing searches:
+
+* [zebra -stripes +spots](http://image-search.0ape.com/search?q=zebra%20-stripes%20%2Bspots) - Animals that look kinda like zebras but with spots instead of stripes.
+* [zebra -mammal +fish](http://image-search.0ape.com/search?q=zebra%20-mammal%20%2Bfish) - Animals that are like zebras but fish instead of mammals.
+* [zebra -animal +car](http://image-search.0ape.com/search?q=zebra%20-animal%20%2Bcar) - Animals that are like zebras but cars instead of animals.
+* [zebra -"black and white"](http://image-search.0ape.com/search?q=zebra%20-%22black%20and%20white%22) - Baby zebras (brown & white) and a Greater Kudu (a brown & white striped 4-legged animal). Of course you could also find the same baby * [zebra searching for zebra -big +small or even more simply baby zebra.
+* [furry black and white striped animal](http://image-search.0ape.com/search?q=furry%20black%20and%20white%20striped%20animal) - returns zebras and other furry black and white animals.
+* [striped horse-like animal](http://image-search.0ape.com/search?q=striped%20horse-like%20animal) - more zebras (and horses with stripes)
+* [zebra habitat -zebra](http://image-search.0ape.com/search?q=zebra%20habitat%20-zebra) - places that look like zebras might live there.
+
+
+--
+
+Thumbnail images in the screenshot are from Wikimedia Commons, and are released under various open source licenses. You can [perform the same search](http://image-search.0ape.com/search?q=zebra%20habitat%20-zebra) and click on an image to see the license for each respective image.
