@@ -17,6 +17,7 @@ import re
 import requests.utils
 import sqlite3
 import string
+import sys
 import time
 import torch
 import torch.nn
@@ -28,16 +29,13 @@ import matplotlib.colors
 import matplotlib.cm
 import pyparsing as pp
 
+from collections.abc import Iterable
 from dataclasses import dataclass,field
 from typing import Optional
 from fastapi import Cookie, FastAPI
 from fastapi.responses import FileResponse,HTMLResponse
-from PIL import Image
-from starlette.requests import Request
 from starlette.responses import StreamingResponse
 from tqdm import tqdm
-from typing import Callable, List, Tuple, cast
-from typing import Iterable, List, NamedTuple, Tuple, TypedDict, cast
 
 @dataclass
 class ImageInfo:
@@ -49,26 +47,26 @@ class ImageInfo:
 
 class RClipServer:
 
-    def __init__(self,rclip_db:str, model_name='ViT-B/32', device='cpu'):
-        print(f"using {rclip_db}")
+    def __init__(self, rclip_db:str, model_name:str='ViT-B/32', device:str='cpu') -> None:
         self.rclip_db: str  = rclip_db
-        self.device     = device
-        self.model_name = model_name
+        self.device:str     = device
+        self.model_name:str = model_name
 
         clip_model, clip_preprocess = clip.load(model_name,device)
-        self.clip_model:      clip.model.CLIP                        = clip_model
-        self.clip_preprocess: Callable[[Image.Image], torch.Tensor]  = clip_preprocess
+        self.clip_model: clip.model.CLIP                                 = clip_model
+        self.clip_preprocess: callable[[PIL.Image.Image], torch.Tensor]  = clip_preprocess
 
-        self.image_embeddings:numpy.ndarray         = None
-        self.image_info:ImageInfo                   = None
-
-        self.load_image_embeddings('')
-        self.feature_minimums:np.ndarray = functools.reduce(lambda x,y: np.minimum(x,y), self.image_embeddings)
-        self.feature_maximums:np.ndarray = functools.reduce(lambda x,y: np.maximum(x,y), self.image_embeddings)
+        image_embeddings,image_info = self.load_image_embeddings('')
+        self.image_embeddings:np.ndarray = image_embeddings
+        self.image_info:list[ImageInfo]  = image_info
+        self.imgid_to_idx                = dict([(ii.image_id,ii.image_index) for ii in image_info])
+        self.feature_minimums:np.ndarray = functools.reduce(lambda x,y: np.minimum(x,y), image_embeddings)
+        self.feature_maximums:np.ndarray = functools.reduce(lambda x,y: np.maximum(x,y), image_embeddings)
         self.feature_ranges:np.ndarray   = self.feature_maximums - self.feature_minimums
-        self.imgid_to_idx = dict([(ii.image_id,ii.image_index) for ii in self.image_info])
+        self.parser:pp.ParserElement     = self.get_parser()
 
-        self.parser = self.get_parser()
+        if os.path.exists('words.sqlite3'):
+            self.load_word_embeddings('words.sqlite3')
 
         print(f"found {len(self.image_info)} images")
 
@@ -83,7 +81,7 @@ class RClipServer:
         img = pillow.Image.open(stream)
         return img
 
-    def get_parser(self):
+    def get_parser(self) -> pp.ParserElement:
         # using pre-release pyparsing==3.0.0rc1 , so I don't need to change APIs later
         sign = pp.Opt(
                     pp.Opt(pp.one_of('+ -'),'+') +
@@ -111,10 +109,9 @@ class RClipServer:
         parser = self.parser
         parsed = parser.search_string(q)
         embeddings = []
-        print(parsed)
         for operator,magnitude,terms in parsed:
             if len(terms)>2 and terms[0] == '(' and terms[-1] == ')': terms=terms[1:-1]
-            print(operator,magnitude,terms)
+            #print(operator,magnitude,terms)
             e = self.guess_user_intent_element(terms) * float(magnitude) * float(operator+'1')
             embeddings.append(e)
         if len(embeddings) == 0:
@@ -124,7 +121,6 @@ class RClipServer:
 
     @functools.lru_cache
     def guess_user_intent_element(self,q) -> np.ndarray:
-        print(f"trying {q}")
         if re.match(r'^https?://',q):
             img = self.download_image(q)
             return self.get_image_embedding([img])
@@ -145,16 +141,15 @@ class RClipServer:
 
         if seed := data.get('random_seed'):
             random.seed(seed)
-            def make_rand_vector(dims):
+            def rand_ndim_unit_vector(dims):
                 """
                    https://stackoverflow.com/questions/6283080/random-unit-vector-in-multi-dimensional-space 
                 """
                 vec = [random.gauss(0, 1) for i in range(dims)]
                 mag = sum(x**2 for x in vec) ** .5
                 return [x/mag for x in vec]
-            rnd_features = make_rand_vector(512)
+            rnd_features = rand_ndim_unit_vector(512)
             return np.asarray([rnd_features])
-
 
     def get_text_embedding(self,words):
         with torch.no_grad():
@@ -174,14 +169,14 @@ class RClipServer:
         return self.image_info[self.imgid_to_idx[img_id]]
 
     # Paraphrased From RClip
-    def find_similar_images(self,desired_features: np.ndarray) -> List[Tuple[float, int]]:
+    def find_similar_images(self,desired_features: np.ndarray) -> list[tuple[float, int]]:
         item_features = self.image_embeddings
         similarities = (desired_features @ item_features.T).squeeze(0).tolist()
         sorted_similarities = sorted(enumerate(similarities), key=lambda x: x[1], reverse=True)
         return sorted_similarities
 
     # Paraphrased From RClip
-    def load_image_embeddings(self,directory: str) -> Tuple[List[str], np.ndarray]:
+    def load_image_embeddings(self,directory: str) -> tuple[list[str], np.ndarray]:
         ii: list[ImageInfo] = []
         image_embedding_list: list[np.ndarray] = []
         with sqlite3.connect(args.db) as con:
@@ -190,7 +185,7 @@ class RClipServer:
                 SELECT *
                   FROM images 
                  WHERE filepath LIKE ? 
-                   AND deleted IS NULL
+                   AND (deleted IS null or deleted = false)
             '''
             rows = con.execute(rclip_sql,('%',))
             cols = set([r[0] for r in rows.description])
@@ -206,11 +201,12 @@ class RClipServer:
                     ii.append(ImageInfo(image_id        = row['id'],
                                         image_index     = idx,
                                         filename        = row['filepath']))
-        self.image_embeddings = np.stack(image_embedding_list)
-        self.image_info       = ii
+        #self.image_embeddings = np.stack(image_embedding_list)
+        #self.image_info       = ii
+        return np.stack(image_embedding_list),ii
 
     def censor(self,img_id):
-        with sqlite3.connect(args.db) as con:
+        with sqlite3.connect(self.rclip_db) as con:
             con.row_factory = sqlite3.Row
             rclip_sql =  f'UPDATE images SET deleted=True where id = ?'
             return con.execute(rclip_sql,(img_id,))
@@ -232,6 +228,28 @@ class RClipServer:
         sorted_similarities = sorted(enumerate(similarities), key=lambda x: x[1], reverse=True)
         return sorted_similarities
 
+    def visualize_clip_embedding(self,desired_embedding):
+        cmap       = seaborn.color_palette('icefire',as_cmap=True)
+        norm       = matplotlib.colors.Normalize(vmin=0, vmax=1)
+        scalar_map = matplotlib.cm.ScalarMappable(norm=norm,cmap=cmap)
+        def get_color(f):
+          rgba = scalar_map.to_rgba(f)
+          return "".join([f'{int(255*x):02x}' for x in rgba[0:3]])
+
+        html_result = "<div style='margin:auto; display:table;'>"
+        clip_vec_as_json = json.dumps({"clip_embedding":desired_embedding.flatten().tolist()})
+        html_result += "<h2>CLIP Embedding</h2>"
+        html_result += (f"<a href=search?q={urllib.parse.quote(clip_vec_as_json)}>CLIP embedding</a>:<br>"+
+                        "* red = above the mean for this dataset<br> * blue = below the mean for this dataset")
+        html_result += "<table style='font-size:7pt'><tr>"
+        normalized_desired_embedding = (desired_embedding - rclip_server.feature_minimums) / rclip_server.feature_ranges
+        zipped_features = zip(desired_embedding.flatten(),normalized_desired_embedding.flatten())
+        for idx,(df,nf) in enumerate(zipped_features):
+            html_result += f"""<td style="background:#{get_color(nf)}">{float(df):0.2g}</td>"""
+            if idx % 8 == 7: html_result += "</tr><tr>" 
+        html_result += "</table></div>"
+        return html_result
+
     def copyright_message(self):
         if re.search(r'wiki',self.rclip_db):
             return '''
@@ -243,6 +261,9 @@ class RClipServer:
         else:
             return self.rclip_db
 
+    ############################################################################
+    ## Optionally load precomputed clip embeddings of words to display
+    ############################################################################
     def load_word_embeddings(self,word_embedding_db):
         word_features: list[np.ndarray] = []
         words:         list[str] = []
@@ -271,28 +292,6 @@ class RClipServer:
         normalized = combined / np.linalg.norm(combined)
         return normalized
 
-    def visualize_clip_embedding(self,desired_embedding):
-        cmap       = seaborn.color_palette('icefire',as_cmap=True)
-        norm       = matplotlib.colors.Normalize(vmin=0, vmax=1)
-        scalar_map = matplotlib.cm.ScalarMappable(norm=norm,cmap=cmap)
-        def get_color(f):
-          rgba = scalar_map.to_rgba(f)
-          return "".join([f'{int(255*x):02x}' for x in rgba[0:3]])
-
-        html_result = "<div style='margin:auto; display:table;'>"
-        clip_vec_as_json = json.dumps({"clip_embedding":desired_embedding.flatten().tolist()})
-        html_result += "<h2>CLIP Embedding</h2>"
-        html_result += (f"<a href=search?q={urllib.parse.quote(clip_vec_as_json)}>CLIP embedding</a>:<br>"+
-                        "* red = above the mean for this dataset<br> * blue = below the mean for this dataset")
-        html_result += "<table style='font-size:7pt'><tr>"
-        normalized_desired_embedding = (desired_embedding - rclip_server.feature_minimums) / rclip_server.feature_ranges
-        zipped_features = zip(desired_embedding.flatten(),normalized_desired_embedding.flatten())
-        for idx,(df,nf) in enumerate(zipped_features):
-            html_result += f"""<td style="background:#{get_color(nf)}">{float(df):0.2g}</td>"""
-            if idx % 8 == 7: html_result += "</tr><tr>" 
-        html_result += "</table></div>"
-        return html_result
-
     # approximate, but fast
     def guess_phrase_score(self,desired_embedding,words):
         pe = self.guess_phrase_embedding(words)
@@ -315,20 +314,11 @@ class RClipServer:
                                           for words in candidate_phrases
                                         ]
         sorted_phrases = sorted(candidate_phrases_with_scores,key=lambda p:p[1],reverse=True)[:100]
-
-        #sorted_phrases = [(s,self.calculate_phrase_score(desired_embedding,s)) for s,z in  sorted_phrases] # even 100 takes a minute
-
-        #candidate_word_vecs           = [self.word_embeddings[idx] for idx,word,score in best_words]
-
-        #first_word_vec                = candidate_word_vecs[0]
-        #candidate_phrase_vecs         = [(v + first_word_vec) / np.linalg.norm(v + first_word_vec) for v in candidate_word_vecs]
-        #candidate_phrase_scores       = [(desired_embedding @ cv.T).squeeze(0).tolist() for cv in candidate_phrase_vecs]
-        #candidate_phrases_with_scores = [(bw[0],bw[1],bw[2],s) for bw,s in zip(best_words,candidate_phrase_scores)]
         return sorted_phrases[:100]
 
 ################################################################################
-# Create FastAPI server
-#   Uses argparse and environment variables because uvicorn swallows args
+# Load a rclip database
+# Also use environment variables, because uvicorn swallows args
 ################################################################################
 
 default_db                = (os.environ.get("CLIP_DB") or
@@ -338,12 +328,16 @@ parser.add_argument('--db','-d',default=str(default_db),help="path to rclip's da
 args,unk                  = parser.parse_known_args()
 if os.path.exists(args.db):
   rclip_server            = RClipServer(args.db)
-  rclip_server.load_word_embeddings('words.sqlite3')
+
+
+################################################################################
+# Create FastAPI server
+#   Uses argparse and environment variables because uvicorn swallows args
+################################################################################
+
 app                       = FastAPI()
 
-###############################################################################
 # HTTP Endpoints
-###############################################################################
 
 @app.get("/",response_class=HTMLResponse)
 def home():
@@ -380,36 +374,22 @@ async def vixualize_clip_embedding_api(q:str, num:Optional[int] = None):
     html_frag = rclip_server.visualize_clip_embedding(desired_features)
     return({'clip_embedding':html_frag})
 
-@app.get("/opposite", response_class=HTMLResponse)
-async def opposite(q:str, num:Optional[int] = None, size:int=Cookie(400)):
-    desired_features = rclip_server.guess_user_intent(q)
-    results = rclip_server.find_similar_images(desired_features * -1)
-    return make_html(results,q,size,num,debug_features = desired_features)
-
-@app.get("/conceptmap", response_class=HTMLResponse)
-async def conceptmap(q:str, m:str=None, p:str=None,num:int = 36, size:int=400, debug:bool=False):
-    features = rclip_server.get_text_embedding(q)
-    if p:
-      plus_features = rclip_server.get_text_embedding(p)
-      features = features + plus_features
-    if m:
-      minus_features = rclip_server.get_text_embedding(m)
-      features = features - minus_features
-    combined_features = features
-    print(features)
-    results = rclip_server.find_similar_images(combined_features)
-    print(results[0:10])
-    return make_html(results,q,size,num,debug_features = combined_features)
-
-@app.get("/censor", response_class=HTMLResponse)
-async def censor_endpoint(img_id:int):
+@app.get("/censor/{img_id}")
+async def censor_endpoint(img_id:int,censorship_key:str):
+    if censorship_key != os.environ.get("RCLIP_SERVER_CENSORSHIP_KEY"):
+        return({"error":"censorship key didn't match"})
     rclip_server.censor(img_id)
-    return(f"<html>Ok, {img_id} is now censored</html>")
+    return({"msg":f"Ok. {img_id} is now censored"})
 
 @app.get("/reload", response_class=HTMLResponse)
 async def reload():
-    rclip_server.__init__(rclip_server._db)
+    rclip_server.__init__(rclip_server.rclip_db)
     return fastapi.responses.RedirectResponse('/')
+
+@app.get("/js/vue.global.prod.js")
+async def vue_js():
+  hdrs = {'Cache-Control': 'public, max-age=172800'}
+  return FileResponse('./assets/vue@3.2.11/vue.global.prod.js', headers=hdrs)
 
 @app.get("/img/{img_id}")
 async def img(img_id:int):
@@ -418,11 +398,6 @@ async def img(img_id:int):
         return fastapi.responses.RedirectResponse(ii.detail_url)
   hdrs = {'Cache-Control': 'public, max-age=172800'}
   return FileResponse(ii.filename, headers=hdrs)
-
-@app.get("/js/vue.global.prod.js")
-async def vue_js():
-  hdrs = {'Cache-Control': 'public, max-age=172800'}
-  return FileResponse('./assets/vue@3.2.11/vue.global.prod.js', headers=hdrs)
 
 @app.get("/thm/{img_id}")
 async def thm(img_id:int, size:Optional[int]=400):
@@ -440,7 +415,7 @@ async def thm(img_id:int, size:Optional[int]=400):
     thm_url = ii.thumbnail_url
     thm_url = re.sub(r'/600px-',f'/{size}px-',thm_url)
     return fastapi.responses.RedirectResponse(thm_url)
-  img = Image.open(ii.filename)
+  img = PIL.Image.open(ii.filename)
   thm = img.thumbnail((size,3*size/4))
   buf = io.BytesIO()
   if img.mode != 'RGB': img = img.convert('RGB')
@@ -451,7 +426,7 @@ async def thm(img_id:int, size:Optional[int]=400):
 @app.get("/info/{img_id}")
 async def info(img_id:int):
     img_path = rclip_server.get_path_from_id(img_id)
-    img     = Image.open(img_path)
+    img     = PIL.Image.open(img_path)
     clip_embedding = rclip_server.get_image_embedding([img])
     info = {'path':img_path,'embedding':clip_embedding.tolist()}
     return fastapi.responses.JSONResponse(content=info)
@@ -460,37 +435,6 @@ async def info(img_id:int):
 async def copyright_message():
     msg = {'copyright_message':rclip_server.copyright_message()}
     return msg
-
-###############################################################################
-# Minimal HTML template
-###############################################################################
-
-def dedup_sims(similarities):
-    seen = set()
-    return [seen.add(s[1]) or s for s in similarities if s[1] not in seen and not seen.add(s[1])]
-
-def make_html(similarities,q,size,num,debug_features=None,debug=False,words=None,phrases=None):
-    # num = num or rclip_server.reasonable_num(size)
-    # sims = dedup_sims(similarities[:num*2])
-    # scores_with_imgids = [(score,rclip_server.image_info[idx]) for idx,score in sims[:num]]
-    debug=True
-
-    tmpl = string.Template("""""")
-
-
-    #bigger_num = (num > 100) and 1000 or num * 10
-    #rnd_param = json.dumps({'random_seed':random.randint(0,10000)})
-    return tmpl.safe_substitute(
-        #                   __q__         = html.escape(q),
-        #                   __title__     = f"rclip_server {html.escape(q)}",
-        #                   __opposite__  = f"opposite?q={urllib.parse.quote(q)}&num={num}",
-        #                   __more__      = f"search?q={urllib.parse.quote(q)}&num={bigger_num}",
-        #                   __rnd__       = f"search?q={urllib.parse.quote(rnd_param)}",
-        #                   __num__       = num,
-        #                   __size__      = size,
-        #                   __hsize__     = int(size*3/4),
-        #                   __debug_txt__ = debug_txt
-                           )
 
 ###############################################################################
 # Launch the server
@@ -512,9 +456,12 @@ if __name__ == "__main__":
           >>> txt_embedding = rclip_server.rclip_server.get_text_embedding('search terms')
           >>> img_embeddings = rs.image_embeddings
           >>> similarities = (txt_embedding @ img_embeddings.T).squeeze(0).tolist()
-  """)
 
-# If using nginx, add the following config to allow the large GET reqests with clip embedding paramaters:
-#
-#   large_client_header_buffers 16 16k;
-#
+
+    Note: If using nginx in front of uvicorn, add the following config to
+          allow the large GET reqests with clip embedding paramaters:
+          
+              large_client_header_buffers 16 16k;
+  """,file=sys.stderr)
+
+

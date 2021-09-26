@@ -82,7 +82,7 @@
           <li><a href="/search?q=zebra -stripes %2Bspots">zebra -stripes +spots</a> - Animals that look kinda like zebras but with spots instead of stripes.
           <li><a href="/search?q=zebra -mammal %2Bfish">zebra -mammal +fish</a> - Animals that are like zebras but fish instead of mammals.
           <li><a href="/search?q=zebra -animal %2Bcar">zebra -animal +car</a> - Animals that are like zebras but cars instead of animals.
-          <li><a href="/search?q=zebra%20-%22black%20and%20white%22">zebra -"black and white"</a> - Baby zebras (brown & white) and a Greater Kudu (abrown & white striped 4-legged animal).  Of course you could also find the same baby zebra searching for <a href="/search?q=zebra%20-big %2Bsmall">zebra -big +small</a> or even more simply <a href="/search?q=zebra%20-big %2Bsmall">baby zebra</a>.
+          <li><a href="/search?q=zebra%20-%22black%20and%20white%22">zebra -"black and white"</a> - Baby zebras (brown & white) and a Greater Kudu (a brown & white striped 4-legged animal).  Of course you could also find the same baby zebra searching for <a href="/search?q=zebra%20-big %2Bsmall">zebra -big +small</a> or even more simply <a href="/search?q=zebra%20-big %2Bsmall">baby zebra</a>.
           <li><a href="/search?q=furry black and white striped animal">furry black and white striped animal</a> - returns zebras and other furry black and white animals.
           <li><a href="/search?q=striped horse-like animal">striped horse-like animal</a> - more zebras (and horses with stripes)
           <li><a href="/search?q=zebra habitat -zebra">zebra habitat -zebra</a> - places that look like zebras might live there.
@@ -211,9 +211,7 @@
 
     function ajax_search_without_history(q) {
 	if ( ! (q)) { return; }
-
-        vue_image_array.items = Array(32).fill([-1,0])
-
+        //vue_image_array.items = Array(32).fill([-1,0])
         vue_image_array.vue_q = q;
 	document.title = "rclip-server "+q;
 	vue_image_array.limit = reasonable_num(vue_image_array.size);
@@ -230,7 +228,7 @@
 		.catch(function (error) {
 		    console.log("Error: " + error);
 		})
-		},10);
+	},10);
 	setTimeout(()=>{
             fetch("similar_words?q="+encodeURIComponent(q))
                 .then(function (response) {
