@@ -371,8 +371,14 @@ async def similar_words(q:str, num:Optional[int] = None):
     result = {'similar_words':similar_words,'similar_phrases':similar_phrases}
     return result
 
+@app.get("/clip_embedding")
+async def clip_embedding(q:str, num:Optional[int] = None):
+    desired_features = rclip_server.guess_user_intent(q)
+    embedding_list = desired_features.squeeze().tolist()
+    return({'clip_embedding':embedding_list})
+
 @app.get("/visualize_clip_embedding")
-async def vixualize_clip_embedding_api(q:str, num:Optional[int] = None):
+async def visualize_clip_embedding_api(q:str, num:Optional[int] = None):
     desired_features = rclip_server.guess_user_intent(q)
     if desired_features is None: return ''
     html_frag = rclip_server.visualize_clip_embedding(desired_features)
