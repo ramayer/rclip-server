@@ -85,8 +85,10 @@ class RClipServer:
     def get_parser(self) -> pp.ParserElement:
         # using pre-release pyparsing==3.0.0rc1 , so I don't need to change APIs later
         sign = pp.Opt(
-                    pp.Opt(pp.one_of('+ -'),'+') +
-                    pp.Opt(pp.pyparsing_common.number.copy(),'1')
+                    pp.Group(
+                        pp.one_of('+ -') +
+                        pp.Opt(pp.pyparsing_common.number.copy(),'1')
+                    )
               ,['+','1'])
         #word  = pp.Word(pp.alphanums,exclude_chars='([{}])') # fails on hyphenated words
         #word  = pp.Word(pp.alphanums,pp.printables,exclude_chars='([{}])') # fails on unicode
@@ -110,7 +112,7 @@ class RClipServer:
         parser = self.parser
         parsed = parser.search_string(q)
         embeddings = []
-        for operator,magnitude,terms in parsed:
+        for (operator,magnitude),terms in parsed:
             if len(terms)>2 and terms[0] == '(' and terms[-1] == ')': terms=terms[1:-1]
             #print(operator,magnitude,terms)
             e = self.guess_user_intent_element(terms) * float(magnitude) * float(operator+'1')
