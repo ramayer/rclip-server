@@ -72,13 +72,14 @@ class RClipServer:
 
     def download_image(self,url) -> PIL.Image.Image:
         headers = {'User-agent': # https://meta.wikimedia.org/wiki/User-Agent_policy
-                   "rclip_server - similar image finder "+
-                   "(http://152.67.254.195/ - still working on setting up contact info)"}
-        resp = requests.get(url,headers=headers)
-        if resp.headers['Content-Type'] not in ['image/jpeg','image/png','image/gif']:
-            raise(Exception(f"unsupported {resp.headers['Content-Type']}"))
-        stream = io.BytesIO(resp.content)
-        img = pillow.Image.open(stream)
+                   "rclip_server - similar image finder - "+
+                   "https://github.com/ramayer/rclip-server/"}
+        # resp = requests.get(url,headers=headers)
+        # if resp.headers['Content-Type'] not in ['image/jpeg','image/png','image/gif']:
+        #     raise(Exception(f"unsupported {resp.headers['Content-Type']}"))
+        # stream = io.BytesIO(resp.content)
+        # img = pillow.Image.open(stream)
+        img = pillow.Image.open(requests.get(url, headers=headers, stream=True, timeout=60).raw)
         return img
 
     def get_parser(self) -> pp.ParserElement:
