@@ -380,6 +380,12 @@ async def clip_embedding(q:str, num:Optional[int] = None):
     embedding_list = desired_features.squeeze().tolist()
     return({'clip_embedding':embedding_list})
 
+@app.get("/clip_text_embedding")
+async def clip_text_embedding(q:str):
+    desired_features = rclip_server.get_text_embedding(q)
+    embedding_list = desired_features.squeeze().tolist()
+    return({'clip_text_embedding':embedding_list})
+
 @app.get("/visualize_clip_embedding")
 async def visualize_clip_embedding_api(q:str, num:Optional[int] = None):
     desired_features = rclip_server.guess_user_intent(q)
