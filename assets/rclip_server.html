@@ -30,6 +30,7 @@
     h2 {text-align: center; background-color: var(--headbkg); padding: 5px}
     .images {font-size: 12pt; display:flex; flex-wrap:wrap;}
     .image_container { position: relative; height:100%; }
+    .label_overlay   { position: absolute;  top: 2px;  left: 2px; padding:4px; display:block; background:black }
     .image_overlay   { position: absolute;  bottom: 2px;  left: 2px; padding:4px; display:none }
     .image_container:hover td {color: var(--brighttext)}
     .image_container:hover .image_overlay {background-color: var(--bkg); display:block}
@@ -45,11 +46,14 @@
   <div id="vue_image_array">
     <div id="header">  
       <form v-on:submit.prevent="search_using_vue(vue_q)">
-        <table width="100%"><tr>
+        <table width="100%">
+          <tr>
             <td width="10%"><label for="new-todo" class="title"><a href="/">Search:</a></label></td>
             <td width="80%"><input class="searchinput" v-model="vue_q" id="vue_q" style="width:100%" placeholder="Search"/></td>
             <td width="10%"><button>Go</button></td>
-          </tr><tr><td></td>
+          </tr>
+          <tr>
+            <td></td>
             <td class="sizes">
               <div style="float:right">
 		<a v-bind:href="make_search_url(rnd_param())"  @click.exact.prevent="search_using_vue(rnd_param())">random</a>
@@ -77,6 +81,10 @@
 	  <a href='#' @click.exact.prevent="add_to_search_term(item[0],'+')"><nobr> + </nobr></a>
 	  <a href='#' @click.exact.prevent="add_to_search_term(item[0],'-')"><nobr> - </nobr></a>
 	</div>
+	<div class="label_overlay">
+	  <input type="checkbox" v-bind:id="'cb'+item[0]" v-bind:value="item[0]" v-model="vue_checkboxes">
+	  <label v-bind:for="'cb'+item[0]">{{item[0]}}</label>
+	</div>
       </div>
       <div id="no_results_msg" class = "no_results_msg" v-bind:style="{'display':no_results_style}">
           <h3>Explore CLIP embeddings of Wikimedia images</h3>
@@ -97,6 +105,10 @@ It can also do a search based on the difference between the CLIP embeddings of t
     </div>
     <div id="more" v-if="visible_items.length > 0">
       <a style="padding-left: 20px" href="javascript:increase_limit(vue_image_array.limit + reasonable_num(vue_image_array.size))">load more images</a>
+      <br>
+      <a href='#' @click.exact.prevent="select_all()">select all</a><br>
+      <input class="label" v-model="vue_label" id="vue_label" style="width:20%" placeholder="label"/><br>
+      <a href='#' @click.exact.prevent="apply_labels(vue_checkboxes)">Apply Labels</a>
     </div>
     <br>
   </div>
@@ -288,7 +300,9 @@ It can also do a search based on the difference between the CLIP embeddings of t
 		items: [],
 		size: (get_cookie('size') || 400), // ;get_size(),
 		limit: 1,
-		vue_q: urlParams.get('q')
+		vue_q: urlParams.get('q'),
+		vue_label: urlParams.get('label'),
+		vue_checkboxes: []
             }
 	},
 	methods: {
@@ -307,6 +321,24 @@ It can also do a search based on the difference between the CLIP embeddings of t
             },
             add_to_search_term(imgid,sign) {
                 this.vue_q = this.vue_q + ' '+sign+'{"image_id":'+imgid+'}';
+            },
+            select_all() {
+                vue_image_array.vue_checkboxes = vue_image_array.visible_items.map(x=>x[0]);
+            },
+            apply_labels(img_ids) {
+                let label = this.vue_label;
+                fetch("add_label?img_ids="+img_ids+"&label="+encodeURIComponent(label))
+                .then(function (response) {
+		    return response.json();
+		})
+		.then(function (data) {
+                    console.log(data)
+		})
+		.catch(function (error) {
+		    console.log("Error: " + error);
+		})
+		//alert("labeled "+imgid+" with "+label);
+                // do ajax query here ....
             },
 	},
 	computed: {

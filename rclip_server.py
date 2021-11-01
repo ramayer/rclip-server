@@ -190,6 +190,7 @@ class RClipServer:
                   FROM images 
                  WHERE filepath LIKE ? 
                    AND (deleted IS null or deleted = false)
+                   and id not in (select image_id from labels)
             '''
             rows = con.execute(rclip_sql,('%',))
             cols = set([r[0] for r in rows.description])
@@ -215,6 +216,22 @@ class RClipServer:
             rclip_sql =  f'UPDATE images SET deleted=True where id = ?'
             return con.execute(rclip_sql,(img_id,))
         self.__init__(self.rclip_db)
+
+    def add_label_to_images(self,img_ids,label):
+        # CREATE TABLE labels(image_id INTEGER, label TEXT, dttm timestamp default (datetime('now')) );
+        with sqlite3.connect(self.rclip_db) as con:
+            for img_id in img_ids.split(','):
+                print(f'trying {img_id} {label}')
+                con.row_factory = sqlite3.Row
+                rclip_sql =  f'INSERT INTO labels (image_id,label) VALUES (?,?)'
+                con.execute(rclip_sql,(img_id,label))
+
+    def remove_label_to_image(self,img_id,label):
+        # CREATE TABLE labels(image_id INTEGER, label TEXT, dttm timestamp default (datetime('now')) );
+        with sqlite3.connect(self.rclip_db) as con:
+            con.row_factory = sqlite3.Row
+            rclip_sql =  f'DELETE FROM labels where image_id = ? and label= ?'
+            return con.execute(rclip_sql,(img_id,label))
 
     def dedup_sqlite(self):
         """ Set the deleted flag for any image that has the exact same embedding as another image """
@@ -399,6 +416,11 @@ async def censor_endpoint(img_id:int,censorship_key:str):
         return({"error":"censorship key didn't match"})
     rclip_server.censor(img_id)
     return({"msg":f"Ok. {img_id} is now censored"})
+
+@app.get("/add_label")
+async def censor_endpoint(img_ids:str,label:str):
+    rclip_server.add_label_to_images(img_ids,label)
+    return({"msg":f"Ok. {img_ids} now labeled"})
 
 @app.get("/reload", response_class=HTMLResponse)
 async def reload():
