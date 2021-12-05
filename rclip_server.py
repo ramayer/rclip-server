@@ -108,6 +108,24 @@ class RClipServer:
     def guess_user_intent(self,q) -> np.ndarray:
         """Support complex queries like
            skiing +summer -winter -(winter sports) +(summer sports) +{img:1234} +https://example.com/img.jpg
+
+
+           * TODO 
+              Consider if adding and subtracting vectors is really what we want here.
+
+              Perhaps we should think more in terms of rotating in the direction of a different term.
+              See also:
+                  https://www.inference.vc/high-dimensional-gaussian-distributions-are-soap-bubble/
+
+                  "If you want to interpolate between two random
+                  without leaving the soap bubble you should instead
+                  interpolate in in polar coordinates ... For a more
+                  robust spherical interpolation scheme you might want
+                  to opt for something like SLERP."
+
+             Some syntax for "start a zerbra, and rotate 20 dgegrees
+             in the direction of horse" might be interesting.
+
         """
         parser = self.parser
         parsed = parser.search_string(q)
