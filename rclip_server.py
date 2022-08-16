@@ -362,6 +362,15 @@ if os.path.exists(args.db):
 
 app                       = FastAPI()
 
+from fastapi.middleware.cors import CORSMiddleware
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 # HTTP Endpoints
 
 @app.get("/",response_class=HTMLResponse)
@@ -453,7 +462,16 @@ async def thm(img_id:int, size:Optional[int]=400):
     thm_url = re.sub(r'/600px-',f'/{size}px-',thm_url)
     return fastapi.responses.RedirectResponse(thm_url)
   img = PIL.Image.open(ii.filename)
-  thm = img.thumbnail((size,3*size/4))
+
+  
+  EXIF_ORIENTATION = 0x0112
+  ROTATION = {3: PIL.Image.ROTATE_180, 6: PIL.Image.ROTATE_270, 8: PIL.Image.ROTATE_90}
+  code = img.getexif().get(EXIF_ORIENTATION, 1)
+  #print(f"filename: {file};  EXIF rotation code: {code}")
+  if code and code != 1:
+    img = PIL.ImageOps.exif_transpose(img)
+
+  img.thumbnail((size,size))
   buf = io.BytesIO()
   if img.mode != 'RGB': img = img.convert('RGB')
   img.save(buf,format="jpeg")
